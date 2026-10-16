@@ -358,13 +358,14 @@ class WidgetProfileRoutingTests(unittest.TestCase):
         self.assertNotEqual(*keys)
         self.assertNotIn("lastPayload", keys)
 
-    def test_query_hook_captures_scope_for_read_refresh_and_invalidation(self) -> None:
+    def test_query_hook_keeps_atomic_cache_refresh_scoped_to_captured_owner(self) -> None:
         expected_key = ["quota", "widget", "remote-a", "shared"]
         self.assertEqual(expected_key, self.result["hookQueryKey"])
         self.assertTrue(self.result["hookEnabled"])
         self.assertEqual({"owner": "a"}, self.result["hookPlaceholder"])
         self.assertEqual({"codex": {"windows": []}}, self.result["hookData"]["providers"])
-        self.assertEqual(2, len(self.result["hookCalls"]))
+        self.assertEqual(1, len(self.result["hookCalls"]))
+        self.assertEqual(["quota", "status", "--json", "--max-age", "60"], self.result["hookCalls"][0]["params"]["argv"][-5:])
         self.assertTrue(
             all(
                 call["route"]["connectionId"] == "remote-a"
@@ -372,7 +373,7 @@ class WidgetProfileRoutingTests(unittest.TestCase):
                 for call in self.result["hookCalls"]
             )
         )
-        self.assertEqual([expected_key], self.result["hookInvalidated"])
+        self.assertEqual([], self.result["hookInvalidated"], "An atomic response must not schedule another read")
 
     def test_route_discovery_is_bounded_by_cli_timeout(self) -> None:
         self.assertIn("quota cli timeout", self.result["timeoutFailure"])

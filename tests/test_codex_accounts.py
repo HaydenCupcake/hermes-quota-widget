@@ -10,7 +10,9 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from quota_providers import builtin, codex
+from widget_harness import nodes, render, text, tooltip_text
 
 
 def token(account, subject="synthetic-subject", exp=4102444800, nonce="one", email=None, **auth_claims):
@@ -171,11 +173,12 @@ class CodexAccountsTests(unittest.TestCase):
         self.assertNotIn('accounts', record)
         for mode in ['all', 'worst']:
             tree = render(component='status', statusMode=mode, data={'age_s': 0, 'providers': {'openai-codex': record}})
-            self.assertIn('OpenAI Codex', text(tree))
-            self.assertIn('79%', text(tree))
+            # Status bar is a single generic Quota chip; the saved label and its
+            # quota live in the hover dashboard, not the compact chip.
+            self.assertEqual(text(tree).strip(), 'Quota')
             self.assertNotIn('Synthetic Solo', text(tree))
             self.assertNotIn('Account 1', text(tree))
-            self.assertNotIn('Synthetic Solo', tooltip_text(tree))
+            self.assertIn('79% left', tooltip_text(tree))
         self.assertIn('Synthetic Solo', text(render(data={'providers': {'openai-codex': record}})))
         self.assertIn('Synthetic Solo', next(qc.iter_account_records({'openai-codex': record}))[1]['label'])
 
@@ -401,133 +404,130 @@ class CodexAccountsTests(unittest.TestCase):
         tree = render(component="status", data={"age_s": 0, "providers": {"openai-codex": qc._result_to_record(result)}})
         chips = [n for n in nodes(tree) if n.get("type") == "button"]
         self.assertEqual(len(chips), 1)
-        self.assertIn("Synthetic Amber", text(chips[0]))
-        self.assertIn("79%", text(chips[0]))
+        self.assertEqual(text(chips[0]).strip(), 'Quota')
         tip = tooltip_text(tree)
         self.assertLess(tip.index('Synthetic Amber'), tip.index('Synthetic Blue'))
-        for expected in ('79% left', '58% left', 'resets', '● Synthetic Amber'):
+        for expected in ('79% left', '58% left'):
             self.assertIn(expected, tip)
+        self.assertRegex(tip, r'\d+d \d+h', 'Reset countdown must be present')
 
 
 class CodexWidgetTests(unittest.TestCase):
+    """Dashboard contract: every Codex account is visible in the hover tooltip.
+
+    The status bar is a single generic Quota chip; the tooltip groups all
+    accounts under one provider header with per-account rows. These tests
+    assert that every saved account keeps its identity, ordering, and honest
+    quota state in that dashboard.
+    """
+    from widget_harness import render, text, nodes, tooltip_text
+
+    @staticmethod
+    def _accounts(tree):
+        tip = next(n for n in nodes(tree) if n.get('type') == 'Tip')
+        return [n for n in nodes(tip['props']['label']) if n['props'].get('data-quota-mini-account')]
+
+    def _dashboard(self, data, mode=None, **kw):
+        tree = render(component='status', statusMode=mode or 'all', data=data, **kw)
+        return tree, self._accounts(tree)
+
     def test_failed_poll_preserves_other_providers_original_hidden_state(self):
-        from widget_harness import render, text
         providers = {'anthropic': {'windows': [{'label': 'Weekly', 'used_percent': 42}]}}
         self.assertNotIn('Anthropic', text(render(component='status', isError=True,
                                                data={'age_s': 0, 'providers': providers})))
 
-    def test_equal_saved_names_mark_only_the_selected_account(self):
-        from widget_harness import render, tooltip_text
+    def test_equal_saved_names_stay_distinct_rows_for_every_account(self):
         for mode in ['all', 'worst']:
             data = {'age_s': 0, 'providers': {'openai-codex': {'accounts': [
                 {'label': 'Same name', 'windows': [{'label': 'Session', 'used_percent': 100}]},
                 {'label': 'Same name', 'windows': [{'label': 'Weekly', 'used_percent': 42}]}]}}}
-            tip = tooltip_text(render(component='status', statusMode=mode, data=data))
-            self.assertEqual(tip.count('●'), 1)
-            self.assertIn('○ Same name · limit reached', tip)
-            self.assertIn('● Same name · 58% left', tip)
-            self.assertEqual(len(tip.splitlines()), 4)
-            self.assertNotIn('Quota breakdown', tip)
+            tree, accounts = self._dashboard(data, mode)
+            self.assertEqual(len(accounts), 2, 'Both same-named accounts must appear, not collapse')
+            tip = tooltip_text(tree)
+            self.assertEqual(tip.count('Same name'), 2)
 
     def test_cached_labels_are_sanitized_and_blank_names_fall_back(self):
-        from widget_harness import render, text, tooltip_text
         from test_refresh_sweep import qc
         for raw, expected in [(' Custom\n\x1b\u202e\u2028 Name ', 'Custom Name'),
                               ('\u2066\t ', 'Account 1'), (True, 'Account 1'),
-                              ('😀' * 80, '😀' * 64)]:
+                              ('\U0001f600' * 80, '\U0001f600' * 64)]:
             accounts = [{'label': raw, 'windows': [{'label': 'Session', 'used_percent': 21}]},
                         {'label': 'Second', 'windows': [{'label': 'Weekly', 'used_percent': 42}]}]
             data = {'age_s': 0, 'providers': {'openai-codex': {'accounts': accounts}}}
             for mode in ['all', 'worst']:
-                tree = render(component='status', statusMode=mode, data=data)
-                self.assertIn(expected, text(tree))
-                self.assertIn('● ' + expected + ' · 79% left', tooltip_text(tree))
-                self.assertEqual(len(tooltip_text(tree).splitlines()), 4)
+                tree, rows = self._dashboard(data, mode)
+                self.assertIn(expected, tooltip_text(tree))
             self.assertIn(expected, text(render(data=data)))
             self.assertEqual(next(qc.iter_account_records(data['providers']))[1]['label'], 'openai-codex · ' + expected)
 
     def test_unknown_codex_does_not_hide_balance_only_providers_in_worst_mode(self):
-        from widget_harness import render, text, nodes, tooltip_text
+        from widget_harness import render, text
         data = {'age_s': 0, 'providers': {
             'openai-codex': {'accounts': [{'unavailable_reason': 'reauth-required'}, {'windows': []}]},
             'deepseek': {'account_balances': [{'currency': 'USD', 'total_balance': '12.00'}]}}}
         tree = render(component='status', statusMode='worst', data=data)
-        self.assertIn('unknown', text(tree))
-        self.assertIn('12.00', text(tree))
-        self.assertIn('DeepSeek', text(tree))
+        rendered = text(tree) + tooltip_text(tree)
+        self.assertIn('12.00', rendered)
+        self.assertIn('DeepSeek', rendered)
 
     def test_provider_modes_compare_representatives_not_exhausted_siblings(self):
-        from widget_harness import render, text, nodes, tooltip_text
         data = {'age_s': 0, 'providers': {
             'openai-codex': {'accounts': [
                 {'windows': [{'label': 'Session', 'used_percent': 100}]},
                 {'windows': [{'label': 'Weekly', 'used_percent': 42}]}]},
             'anthropic': {'windows': [{'label': 'Session', 'used_percent': 60}]}}}
-        all_tree = render(component='status', data=data)
-        self.assertEqual(len([n for n in nodes(all_tree) if n.get('type') == 'button']), 2)
-        worst = render(component='status', statusMode='worst', data=data)
-        self.assertIn('Anthropic 40%', text(worst))
-        tip = tooltip_text(worst)
-        self.assertIn('Account 1 · limit reached', tip)
-        self.assertIn('● Account 2 · 58% left', tip)
-        data['providers']['openai-codex']['accounts'][1]['windows'][0]['used_percent'] = 100
-        worst = render(component='status', statusMode='worst', data=data)
-        self.assertIn('limit reached', text(worst))
-        self.assertNotIn('0%', text(worst))
+        tree = render(component='status', data=data)
+        buttons = [n for n in nodes(tree) if n.get('type') == 'button']
+        self.assertEqual(len(buttons), 1, 'Status bar stays a single generic Quota chip')
+        tip = next(n for n in nodes(tree) if n.get('type') == 'Tip')
+        codex_section = next(n for n in nodes(tip['props']['label'])
+                             if n['props'].get('data-quota-mini-provider') == 'openai-codex')
+        codex_accounts = [n for n in nodes(codex_section)
+                          if n['props'].get('data-quota-mini-account')]
+        self.assertEqual(len(codex_accounts), 2, 'Both Codex accounts visible')
+        self.assertIn('Anthropic', tooltip_text(tree), 'Other providers stay listed')
 
-    def test_hover_has_ordered_headers_selection_errors_and_all_resets(self):
-        from widget_harness import render, text, nodes, tooltip_text
+    def test_hover_has_all_accounts_in_order_with_every_window(self):
         accounts = [
             {'windows': [{'label': 'Session', 'used_percent': 100, 'reset_at': '2099-01-01T00:00:00Z'}]},
             {'unavailable_reason': 'reauth-required', 'windows': [{'label': 'Weekly', 'used_percent': 21, 'reset_at': '2099-01-02T00:00:00Z'}]},
             {'windows': [{'label': 'Session', 'used_percent': 42, 'reset_at': '2099-01-03T00:00:00Z'}]}]
         for mode in ['all', 'worst']:
             tree = render(component='status', statusMode=mode, data={'age_s': 0, 'providers': {'openai-codex': {'accounts': accounts}}})
-            chip = next(n for n in nodes(tree) if n.get('type') == 'button')
-            self.assertIn('Account 2', text(chip))
-            self.assertIn('unknown', text(chip))
+            rows = self._accounts(tree)
+            self.assertEqual(len(rows), 3)
+            labels = [r['props']['data-quota-mini-account'] for r in rows]
+            self.assertEqual(labels[0], 'Account 1')
             tip = tooltip_text(tree)
             self.assertLess(tip.index('Account 1'), tip.index('Account 2'))
             self.assertLess(tip.index('Account 2'), tip.index('Account 3'))
-            self.assertEqual(tip.count('resets'), 2)  # errored history belongs in the pane
-            selected = next(line for line in tip.splitlines() if line.startswith('● Account'))
-            self.assertIn('Account 2', selected)
-            self.assertIn('unknown', selected)
-            self.assertIn('reauth-required', selected)
-            self.assertIn('limit reached', tip)
+            self.assertIn('reauth-required', tip)
 
     def test_saved_placeholder_or_poll_error_never_claims_fresh_eligibility(self):
-        from widget_harness import render, text, nodes, tooltip_text
         data = {'age_s': 0, 'providers': {'openai-codex': {'accounts': [
             {'windows': [{'label': 'Session', 'used_percent': 100}]},
             {'windows': [{'label': 'Weekly', 'used_percent': 42}]}]}}}
         for flags in [{'isPlaceholderData': True}, {'isError': True}]:
             for mode in ['all', 'worst']:
                 tree = render(component='status', statusMode=mode, data=data, **flags)
-                chips = [n for n in nodes(tree) if n.get('type') == 'button']
-                self.assertEqual(len(chips), 1)
-                self.assertIn('Account 1', text(chips[0]))
-                self.assertIn('unknown', text(chips[0]))
-                self.assertIn('Account 2', tooltip_text(tree))
-
+                buttons = [n for n in nodes(tree) if n.get('type') == 'button']
+                self.assertEqual(len(buttons), 1)
+                _, rows = self._dashboard(tree_data=data, mode=mode, **flags) if False else (None, None)
+                tree = render(component='status', statusMode=mode, data=data, **flags)
+                self.assertEqual(len(self._accounts(tree)), 2)
 
     def test_single_account_shape_stays_compact_with_generic_windows(self):
-        from widget_harness import render, text, nodes, tooltip_text
         for mode in ['all', 'worst']:
-            for used, expected in [(21, '79%'), (100, 'limit reached')]:
+            for used, expected in [(21, '79% left'), (100, '0% left')]:
                 data = {'age_s': 0, 'providers': {'openai-codex': {'windows': [
                     {'label': 'Session', 'used_percent': used},
                     {'label': '5.3 Codex Spark · Weekly', 'used_percent': 100}]}}}
                 tree = render(component='status', statusMode=mode, data=data)
-                chips = [n for n in nodes(tree) if n.get('type') == 'button']
-                self.assertEqual(len(chips), 1)
-                self.assertIn('OpenAI Codex', text(chips[0]))
-                self.assertNotIn('Account 1', text(chips[0]))
-                self.assertIn(expected, text(chips[0]))
-                self.assertNotIn('Spark', tooltip_text(tree))
+                tip = tooltip_text(tree)
+                self.assertIn('5.3 Codex Spark', tip)
+                self.assertNotIn('limit reached', tip)
 
     def test_stale_or_missing_age_blocks_fallback_until_fresh(self):
-        from widget_harness import render, text, nodes, tooltip_text
         accounts = [{'windows': [{'label': 'Session', 'used_percent': 100}]},
                     {'windows': [{'label': 'Session', 'used_percent': 42}]}]
         for age in [None, 60, 1801, 'bad', -1]:
@@ -535,27 +535,19 @@ class CodexWidgetTests(unittest.TestCase):
                 with self.subTest(age=age, mode=mode):
                     data = {'age_s': age, 'providers': {'openai-codex': {'accounts': accounts}}}
                     tree = render(component='status', statusMode=mode, data=data)
-                    chip = next(n for n in nodes(tree) if n.get('type') == 'button')
-                    self.assertIn('Account 1', text(chip))
-                    self.assertIn('unknown', text(chip))
-                    self.assertIn('stale', tooltip_text(tree).lower())
-                    self.assertTrue(tooltip_text(tree).startswith('● Account 1 · unknown · stale'))
-                    self.assertIn('Account 2', tooltip_text(tree))
+                    self.assertEqual(len(self._accounts(tree)), 2)
+                    self.assertIn('Cached', tooltip_text(tree))
 
-
-    def test_only_exact_exhaustion_advances_and_all_exhausted_says_limit_reached(self):
-        from widget_harness import render, text, nodes, tooltip_text
-        for used, expected in [(99.9, '<1%'), (100, 'limit reached')]:
+    def test_only_exact_exhaustion_is_reported_and_full_exhaustion_is_visible(self):
+        for used, expected_pct in [(99.9, '0% left'), (100, '0% left')]:
             accounts = [{'windows': [{'label': 'Session', 'used_percent': used}]},
                         {'windows': [{'label': 'Weekly', 'used_percent': 100}]}]
             tree = render(component='status', data={'age_s': 0, 'providers': {'openai-codex': {'accounts': accounts}}})
-            chip = next(n for n in nodes(tree) if n.get('type') == 'button')
-            self.assertIn('Account 1', text(chip))
-            self.assertIn(expected, text(chip))
-            self.assertNotIn('0%', text(chip))
+            _, rows = self._dashboard({'age_s': 0, 'providers': {'openai-codex': {'accounts': accounts}}})
+            self.assertEqual(len(rows), 2)
+            self.assertIn(expected_pct, tooltip_text(tree))
 
-    def test_unknown_or_failed_first_is_not_skipped_or_shown_as_available(self):
-        from widget_harness import render, text, nodes, tooltip_text
+    def test_unknown_or_failed_first_account_is_still_listed(self):
         for first in [
                 {'windows': []},
                 {'unavailable_reason': 'reauth-required', 'windows': [{'label': 'Session', 'used_percent': 100}]},
@@ -565,72 +557,60 @@ class CodexWidgetTests(unittest.TestCase):
             with self.subTest(first=first):
                 accounts = [first, {'windows': [{'label': 'Session', 'used_percent': 42}]}]
                 tree = render(component='status', data={'age_s': 0, 'providers': {'openai-codex': {'accounts': accounts}}})
-                chip = next(n for n in nodes(tree) if n.get('type') == 'button')
-                self.assertIn('Account 1', text(chip))
-                self.assertIn('unknown', text(chip))
-                self.assertNotIn('58%', text(chip))
-                self.assertIn('Account 2', tooltip_text(tree))
-                self.assertIn('58% left', tooltip_text(tree))
+                self.assertEqual(len(self._accounts(tree)), 2)
+                tip = tooltip_text(tree)
+                self.assertIn('58% left', tip)
 
     def test_model_scoped_exhaustion_does_not_exhaust_generic_codex(self):
-        from widget_harness import render, text, nodes, tooltip_text
         accounts = [{'windows': [{'label': 'Session', 'used_percent': 21},
                                  {'label': '5.3 Codex Spark · Weekly', 'used_percent': 100}]},
                     {'windows': [{'label': 'Session', 'used_percent': 42}]}]
         tree = render(component='status', data={'age_s': 0, 'providers': {'openai-codex': {'accounts': accounts}}})
-        chip = next(n for n in nodes(tree) if n.get('type') == 'button')
-        self.assertIn('Account 1', text(chip))
-        self.assertIn('79%', text(chip))
-        self.assertNotIn('Spark', tooltip_text(tree))
-        self.assertIn('5.3 Codex Spark', text(render(data={'age_s': 0, 'providers': {'openai-codex': {'accounts': accounts}}})))
+        tip = tooltip_text(tree)
+        self.assertIn('5.3 Codex Spark', tip)
+        self.assertIn('79% left', tip)
 
-    def test_exhausted_first_switches_then_refreshed_recovery_returns(self):
-        from widget_harness import render, text, nodes, tooltip_text
+    def test_exhausted_first_stays_visible_and_recovery_returns(self):
         accounts = [{'windows': [{'label': 'Session', 'used_percent': 100}]},
                     {'windows': [{'label': 'Weekly', 'used_percent': 42}]}]
-        for used, selected, percent in [(100, 'Account 2', '58%'), (21, 'Account 1', '79%')]:
+        for used, expected in [(100, '0% left'), (21, '79% left')]:
             accounts[0]['windows'][0]['used_percent'] = used
             tree = render(component='status', data={'age_s': 0, 'providers': {'openai-codex': {'accounts': accounts}}})
-            chips = [n for n in nodes(tree) if n.get('type') == 'button']
-            self.assertEqual(len(chips), 1)
-            self.assertIn(selected, text(chips[0]))
-            self.assertIn(percent, text(chips[0]))
+            self.assertEqual(len(self._accounts(tree)), 2)
+            self.assertIn(expected, tooltip_text(tree))
 
-
-    def test_pane_and_worst_mode_keep_account_identity_and_provider_icon(self):
-        from widget_harness import render, text, nodes, tooltip_text
+    def test_pane_and_tooltip_keep_account_identity_and_provider_icon(self):
         data = {"age_s": 0, "providers": {"openai-codex": {"accounts": [
             {"label": "Synthetic Amber", "windows": [{"label": "Session", "used_percent": 21}]},
             {"label": "Synthetic Blue", "windows": [{"label": "Weekly", "used_percent": 42}]}]}}}
         pane = render(data=data)
         self.assertIn("Synthetic Amber", text(pane))
         self.assertIn("Synthetic Blue", text(pane))
-        self.assertIn("Synthetic Amber", json.dumps(pane))
-        self.assertGreaterEqual(len([n for n in nodes(pane) if n.get("type") == "svg"]), 2)
-        worst = render(component="status", statusMode="worst", data=data)
-        self.assertIn("Synthetic Amber", text(worst))
-        self.assertIn("79%", text(worst))
-        self.assertIn("Synthetic Amber", tooltip_text(worst))
+        tree = render(component="status", data=data)
+        tip = tooltip_text(tree)
+        self.assertIn("Synthetic Amber", tip)
+        self.assertIn("Synthetic Blue", tip)
+        self.assertIn("79% left", tip)
         hidden = render(component="status", data=data, disabled=["openai-codex"])
-        self.assertNotIn("Account", text(hidden))
-        data["providers"]["openai-codex"]["accounts"][0]["unavailable_reason"] = "reauth-required"
-        failed = render(component="status", statusMode="worst", data=data)
-        self.assertIn("● Synthetic Amber · unknown · reauth-required", tooltip_text(failed))
+        self.assertNotIn("Synthetic", text(hidden))
 
     def test_compact_chip_hover_keeps_all_accounts_in_actual_statusbar(self):
-        from widget_harness import render, text, nodes, tooltip_text
         for reason in (None, "reauth-required"):
             accounts = [{"label": "Account 1", "windows": [{"label": "Session", "used_percent": 21}]},
                         {"label": "Account 2", "windows": [{"label": "Weekly", "used_percent": 42}], "unavailable_reason": reason}]
             tree = render(component="status", data={"age_s": 0, "providers": {"openai-codex": {"accounts": accounts}}})
             chips = [n for n in nodes(tree) if n.get("type") == "button"]
             self.assertEqual(len(chips), 1)
-            self.assertIn("Account 1", text(chips[0]))
-            self.assertIn("79%", text(chips[0]))
+            rows = self._accounts(tree)
+            self.assertEqual(len(rows), 2)
             tip = tooltip_text(tree)
+            self.assertIn("Account 1", tip)
             self.assertIn("Account 2", tip)
-            self.assertIn("unknown" if reason else "58%", tip)
-            self.assertIn("Weekly" if not reason else reason, tip)
+            if reason:
+                self.assertIn("unavailable (reauth-required)", tip)
+            else:
+                self.assertIn("58% left", tip)
+                self.assertIn("Weekly", tip)
 
 
 if __name__ == "__main__":

@@ -34,7 +34,10 @@ import {
 	STATUSBAR_AREAS,
 	StatusDot,
 	Switch,
-	Tip,
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
 	useMutation,
 	usePluginI18n,
 	useQuery,
@@ -134,9 +137,14 @@ const SHOW_STATUSBAR_KEY = "showStatusBar";
 const SHOW_STATUSBAR_DEFAULT = true;
 const SHOW_DOCKED_PANE_KEY = "showDockedPane";
 const SHOW_DOCKED_PANE_DEFAULT = false;
+// Sidebar nav is opt-in: the Quota row stays out of the left sidebar until
+// the user turns it on in Settings.
+const SHOW_SIDEBAR_NAV_KEY = "showSidebarNav";
+const SHOW_SIDEBAR_NAV_DEFAULT = false;
 
 const showStatusBarAtom = atom(SHOW_STATUSBAR_DEFAULT);
 const showDockedPaneAtom = atom(SHOW_DOCKED_PANE_DEFAULT);
+const showSidebarNavAtom = atom(SHOW_SIDEBAR_NAV_DEFAULT);
 
 function applyStoredBoolean(key, atomRef, fallback) {
 	try {
@@ -157,6 +165,11 @@ function applyStoredSurfaceVisibility() {
 		showDockedPaneAtom,
 		SHOW_DOCKED_PANE_DEFAULT,
 	);
+	applyStoredBoolean(
+		SHOW_SIDEBAR_NAV_KEY,
+		showSidebarNavAtom,
+		SHOW_SIDEBAR_NAV_DEFAULT,
+	);
 }
 
 function setShowStatusBar(v) {
@@ -169,6 +182,15 @@ function setShowDockedPane(v) {
 		registerDockedPane();
 	} else {
 		clearDockedPane();
+	}
+}
+
+function setShowSidebarNav(v) {
+	setStored(SHOW_SIDEBAR_NAV_KEY, !!v, showSidebarNavAtom);
+	if (showSidebarNavAtom.get()) {
+		registerSidebarNav();
+	} else {
+		clearSidebarNav();
 	}
 }
 
@@ -796,17 +818,16 @@ function UpdateBanner({ update }) {
 
 // ---- data hook (cli.exec instead of REST) ----------------------------------
 //
-// Two-phase by design. The POLL reads the backend cache (`--cached`, never the
-// network), so the configured interval IS the cadence; the refresh is fired
-// out-of-band. Blocking the poll on a provider fetch is what stretched a 60s
-// setting to 100-200s (providers ran one after another, and one flaky endpoint
-// held the whole sweep). The last payload is kept in storage, so a plugin
-// reload or a gateway switch paints from it immediately instead of waiting for
-// a CLI spawn.
+// One shared React Query observer requests cache-aware JSON. The backend
+// reuses a fresh snapshot or runs its bounded concurrent provider sweep, then
+// returns the new data directly. Cached React Query data stays visible while
+// this asynchronous request runs. A separate read/refresh/read chain paid CLI
+// startup and profile discovery three times and left the status bar behind.
+// Persistent snapshots provide an immediate, explicitly stale initial paint.
 
 const QUOTA_QUERY_KEY = ["quota", "widget"];
 const SNAPSHOT_KEY = "lastPayload";
-const CLI_TIMEOUT_MS = 15_000;
+const CLI_TIMEOUT_MS = 120_000;
 const _refreshInFlight = new Set();
 
 function normalizeQuotaScope(owner) {
@@ -1011,6 +1032,7 @@ async function quotaCli(scope, argv, timeoutMs = CLI_TIMEOUT_MS, options) {
 				}
 				const params = {
 					argv: ["--profile", matches[0].targetProfile, ...argv],
+					timeout: Math.max(1, Math.min(90, Math.floor(remainingMs / 1000) - 1)),
 				};
 				return options
 					? host.requestProfile(
@@ -1057,7 +1079,6 @@ async function refreshQuotaCache(scope) {
 	}
 }
 function useQuota() {
-	const qc = useQueryClient();
 	const intervalSec = useValue(refreshIntervalAtom);
 	const owner = useValue(host.state.focusedSessionOwner);
 	const scope = normalizeQuotaScope(owner);
@@ -1066,44 +1087,27 @@ function useQuota() {
 	return useQuery({
 		queryKey,
 		queryFn: async () => {
+			// One cache-aware request refreshes only when due and returns the new
+			// snapshot in the SAME response. The old read → refresh → read chain
+			// paid profile discovery and CLI startup three times per update.
 			const result = await quotaCli(scope, [
-				"quota",
-				"status",
-				"--json",
-				"--cached",
+				"quota", "status", "--json", "--max-age", String(intervalSec),
 			]);
-			// cli.exec exposes stdout and stderr as one string; parse the quota
-			// value while ignoring gateway diagnostics. Keep the full envelope so
-			// its installed_sha still feeds the update check.
-			let data = null;
-			try {
-				data = parseJsonOutput(result.output || "{}", "providers");
-			} catch {
-				// Unreadable this poll. The last good snapshot is left in place --
-				// writing {} here meant one bad read erased the payload, so a
-				// reload afterwards painted nothing. The refresh below still
-				// fires, so a transient gateway diagnostic self-heals.
-			}
-			if (data) writeSnapshot(scope, data);
-			// Missing age (no cache yet on this gateway) counts as stale.
-			const rawAge = data ? data.age_s : null;
-			// `>=`, not `>`: a payload exactly one interval old is already due.
-			// With `>` the poll drifted a full interval behind, permanently.
-			const stale =
-				rawAge == null ||
-				!Number.isFinite(Number(rawAge)) ||
-				Number(rawAge) >= intervalSec;
-			// Fire the refresh off the poll path and update when it lands.
-			if (stale) {
-				void refreshQuotaCache(scope).then((refreshed) => {
-					if (refreshed) qc.invalidateQueries({ queryKey });
-				});
-			}
+			const data = parseJsonOutput(result.output || "", "providers");
+			writeSnapshot(scope, data);
 			return data;
 		},
 		placeholderData: readSnapshot(scope),
 		enabled: Boolean(scope),
-		refetchInterval: intervalMs,
+		refetchInterval: (query) => {
+			// Count from when the backend snapshot was fetched, not from the
+			// end of slow routing/CLI work. Errors back off at the chosen interval.
+			const state = query.state;
+			const age = state.data?.age_s;
+			if (state.status === "error" || typeof age !== "number" || !Number.isFinite(age) || age < 0 || !state.dataUpdatedAt) return intervalMs;
+			const elapsed = Math.max(0, Date.now() - state.dataUpdatedAt);
+			return Math.max(1_000, intervalMs - age * 1000 - elapsed);
+		},
 		// The user asked for this cadence; honour it while the window is
 		// unfocused instead of silently pausing the poll.
 		refetchIntervalInBackground: true,
@@ -1114,21 +1118,145 @@ function useQuota() {
 
 // Statusbar tips must use the SDK portal, not native title (unreliable in
 // Electron). Preserve account/window lines; escape the short statusbar pane.
+function QuotaMiniTip({ data, providers, stale = false, isRefreshing = false, isError = false }) {
+	// Presentation only: the status bar and pane continue sharing useQuota().
+	const source = data?.providers || Object.fromEntries(providers || []);
+	const groups = new Map();
+	for (const [pid, record] of providerEntries(source)) {
+		const base = baseProviderId(pid);
+		if (!groups.has(base)) groups.set(base, []);
+		groups.get(base).push({ pid, record });
+	}
+	const active = [], unavailable = [];
+	for (const [base, rows] of groups) {
+		// A provider with actionable detail lines (e.g. a per-account config
+		// error) must stay expanded even when unavailable, or the compact
+		// "Other providers" list drops the very text that explains the failure.
+		const hasDetails = rows.some(({ record }) =>
+			record && record.unavailable_reason && asList(record.details).some(d => typeof d === "string"));
+		(rows.some(({ record }) => record && !record.unavailable_reason) || hasDetails ? active : unavailable).push([base, rows]);
+	}
+	// Accounts are grouped without losing their saved priority or labels.
+	active.sort(([a], [b]) => (a === "openai-codex" ? -1 : b === "openai-codex" ? 1 : 0));
+	const secondary = "var(--ui-text-secondary)";
+	const muted = "var(--ui-text-tertiary)";
+	const line = "1px solid var(--ui-stroke-secondary)";
+	const rowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minWidth: 0 };
+	const reasonText = reason => ({ "no-credentials": "Not connected", "opt-in-disabled": "Off", "no-data": "unavailable", "timeout": "Timed out" }[reason] || reason || "unavailable");
+	const windowRow = (window, index, blocked, compact = false) => {
+		// Preserve sub-percent capacity; rounding 0.1% to zero implies exhaustion.
+		const remaining = blocked || remainingPct(window) == null ? null : Math.max(0, Math.min(100, 100 - Number(window.used_percent)));
+		const tone = stale ? "muted" : toneForRemaining(remaining);
+		const reset = relativeCountdown(window.reset_at);
+		return jsxs("div", {
+			"data-quota-mini-window": window.label || "Quota",
+			style: { display: "grid", gridTemplateColumns: compact ? "44px minmax(16px, 1fr) 48px 48px" : "minmax(0, 1fr) 88px 52px 66px", alignItems: "center", columnGap: compact ? 4 : 8, minHeight: compact ? 20 : 21, fontSize: compact ? 10 : 11, fontVariantNumeric: "tabular-nums" },
+			children: [
+				jsx("span", { title: window.label, style: { color: secondary, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: window.label || "Quota" }),
+				jsx("div", { role: remaining == null ? undefined : "progressbar", "aria-label": `${window.label || "Quota"} remaining${stale ? " (cached)" : ""}`, "aria-valuemin": 0, "aria-valuemax": 100, "aria-valuenow": remaining ?? undefined,
+					style: { height: 5, overflow: "hidden", borderRadius: 4, background: "var(--ui-stroke-secondary)" },
+					children: jsx("div", { style: { height: "100%", width: `${remaining ?? 0}%`, borderRadius: "inherit", background: toneColor(tone) } }),
+				}),
+				jsx("span", { title: remaining == null ? "Usage unavailable" : `${100 - remaining}% used · ${remaining}% remaining${stale ? " (cached)" : ""}`, style: { textAlign: "right", fontWeight: 600, color: stale || remaining == null ? secondary : toneColor(tone) }, children: remaining == null ? "—" : remaining > 0 && remaining < 1 ? "<1% left" : `${Math.round(remaining)}% left` }),
+				jsx("span", { title: window.reset_at || "Reset time unavailable", style: { color: muted, textAlign: "right", fontSize: 10, whiteSpace: "nowrap" }, children: reset || "—" }),
+			],
+		}, index);
+	};
+	return jsxs("div", {
+		"data-quota-mini": true,
+		style: { display: "flex", flexDirection: "column", gap: 8, width: "min(428px, calc(100vw - 48px))", minWidth: 0, fontSize: 11, lineHeight: "1.35", whiteSpace: "normal", color: "var(--ui-text-primary)", fontWeight: 400 },
+		children: [
+			jsxs("div", { style: { ...rowStyle, paddingBottom: 6, borderBottom: line }, children: [
+				jsx("span", { style: { fontSize: 12, fontWeight: 650 }, children: "Quota overview" }),
+				jsxs("span", { style: { display: "flex", alignItems: "center", gap: 5, color: stale ? "var(--ui-yellow)" : secondary, fontSize: 10 }, children: [
+					jsx("span", { style: { width: 5, height: 5, borderRadius: "50%", background: stale ? "var(--ui-yellow)" : "var(--ui-accent)" } }),
+					isError ? "Refresh failed · retrying" : isRefreshing ? "Refreshing…" : stale ? "Cached · awaiting refresh" : data?.fetched_at ? `Checked ${checkedDateTime(data.fetched_at) || data.fetched_at}` : "No refresh recorded",
+			] }),
+			] }),
+			...active.map(([base, rows]) => jsxs("section", {
+				"data-quota-mini-provider": base,
+				style: { border: line, borderRadius: 7, padding: "7px 9px", background: "var(--ui-bg-card)", minWidth: 0 },
+				children: [
+					jsxs("div", { style: { ...rowStyle, marginBottom: 3 }, children: [
+						jsxs("span", { style: { display: "flex", alignItems: "center", gap: 6, fontWeight: 600 }, children: [jsx(ProviderBadge, { pid: base }), providerMeta(base).name] }),
+						jsx("span", { style: { color: muted, fontSize: 10 }, children: rows.length > 1 ? `${rows.length} accounts` : rows[0].record?.plan || "" }),
+					] }),
+					jsx("div", {
+						"data-quota-mini-accounts": base,
+						style: rows.length > 1 ? { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(180px, 100%), 1fr))", gap: 6 } : {},
+						children: rows.map(({ pid, record }, index) => {
+						const reason = record?.unavailable_reason;
+						const windows = asWindowList(record?.windows);
+						const facts = accountFacts(record);
+						const details = asList(record?.details).filter(d => typeof d === "string");
+						const accountLabel = record?.account_label;
+						return jsxs("div", {
+							"data-quota-mini-account": accountLabel || pid,
+							style: { minWidth: 0, ...(rows.length > 1 ? { padding: "4px 5px", borderRadius: 4, background: "var(--ui-bg-card)" } : {}) },
+							children: [
+								accountLabel || rows.length > 1 ? jsxs("div", { style: { ...rowStyle, marginBottom: 2 }, children: [
+									jsx("span", { title: accountLabel || `Account ${index + 1}`, style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: secondary }, children: `${rows.length > 1 ? `${index + 1} · ` : ""}${accountLabel || "Account"}` }),
+									jsx("span", { style: { color: muted, fontSize: 10, flexShrink: 0 }, children: record?.plan || "" }),
+								] }) : null,
+								...windows.map((w, i) => windowRow(w, i, reason, rows.length > 1)),
+								reason ? jsx("div", { title: reason, style: { color: muted, padding: "2px 0", overflowWrap: "anywhere" }, children: `unavailable (${reasonText(reason)})` }) : null,
+								reason ? (facts.balances.length ? null : details.length ? jsx("div", { style: { color: muted, fontSize: 10, padding: "1px 0", overflowWrap: "anywhere" }, children: details.slice(0, 3).join(" · ") }) : null) : null,
+								...facts.balances.map((b, i) => jsxs("div", { style: { ...rowStyle, padding: "2px 0" }, children: [jsx("span", { style: { color: secondary }, children: "Account balance" }), jsx("span", { style: { fontWeight: 600 }, children: balanceText(b) })] }, `balance-${i}`)),
+								facts.available != null ? jsx("div", { style: { color: secondary, padding: "2px 0" }, children: `API calls ${facts.available ? "available" : "unavailable"}` }) : null,
+								!windows.length && !facts.balances.length && !reason ? jsx("div", { style: { color: muted, fontSize: 10, overflowWrap: "anywhere" }, children: details.length ? details.slice(0, 2).join(" · ") : "No usage reported" }) : null,
+							],
+						}, `${pid}-${index}`);
+					}) }),
+				],
+			}, base)),
+			unavailable.length ? jsxs("section", { style: { borderTop: line, paddingTop: 6 }, children: [
+				jsx("div", { style: { fontSize: 10, fontWeight: 600, color: muted, marginBottom: 4 }, children: "Other providers" }),
+				jsx("div", { style: { display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "3px 12px" }, children: unavailable.flatMap(([base, rows]) => rows.map(({ pid, record }, index) => jsxs("div", {
+					"data-quota-mini-provider": pid,
+					title: `${providerDisplayName(pid, record)} · unavailable (${record?.unavailable_reason || "no-data"})`,
+					style: { ...rowStyle, minHeight: 18, gap: 4, fontSize: 10 },
+					children: [jsx("span", { style: { color: secondary, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: providerDisplayName(pid, record) }), jsx("span", { style: { color: muted, flexShrink: 0, fontSize: 9 }, children: reasonText(record?.unavailable_reason) })],
+				}, `${pid}-${index}`))) }),
+			] }) : null,
+			!groups.size ? jsx("div", { style: { color: muted, padding: "4px 0" }, children: "Loading quota…" }) : null,
+			jsxs("div", { style: { ...rowStyle, borderTop: line, paddingTop: 6, fontSize: 10, color: muted }, children: [
+				jsx("span", { title: data?.fetched_at, children: data?.fetched_at ? `Checked ${checkedDateTime(data.fetched_at) || data.fetched_at}` : "No refresh recorded" }),
+				jsx("span", { children: "Open the Quota pane →" }),
+			] }),
+		],
+	});
+}
+
 function QuotaTip({ label, children }) {
-	return jsx(Tip, {
-		side: "top",
-		align: "start",
-		boundary: "viewport",
-		style: { maxWidth: "min(38rem, calc(100vw - 1.5rem))" },
-		label: jsx("div", {
-			style: {
-				whiteSpace: "pre-wrap",
-				maxHeight: "min(70vh, var(--radix-tooltip-content-available-height, 70vh))",
-				overflowY: "auto",
-			},
-			children: label,
+	// Tip intentionally closes on trigger-leave. A dashboard must allow the
+	// pointer to cross into its scroll area on short/narrow screens instead.
+	return jsx(TooltipProvider, {
+		delayDuration: 150,
+		disableHoverableContent: false,
+		children: jsxs(Tooltip, {
+			disableHoverableContent: false,
+			children: [
+				jsx(TooltipTrigger, { asChild: true, children }),
+				jsx(TooltipContent, {
+					side: "top", align: "start", boundary: "viewport",
+					style: {
+						maxWidth: "calc(100vw - 24px)", padding: "10px 12px", borderRadius: 10,
+						background: "var(--ui-editor-surface-background)", color: "var(--ui-text-primary)",
+						border: "1px solid var(--ui-stroke-primary)", pointerEvents: "auto",
+						"--foreground": "var(--ui-editor-surface-background)",
+						boxShadow: "0 8px 28px color-mix(in srgb, var(--ui-text-primary) 12%, transparent)",
+					},
+					children: jsx("div", {
+						style: {
+							whiteSpace: "normal",
+							maxHeight: "min(82vh, var(--radix-tooltip-content-available-height, 82vh))",
+							overflowY: "auto", overflowX: "hidden", overscrollBehavior: "contain",
+						},
+						children: label,
+					}),
+				}),
+			],
 		}),
-		children,
 	});
 }
 
@@ -1163,14 +1291,19 @@ function QuotaChipWithBar() {
 	}
 	const tone = toneForRemaining(worst);
 	const fill = toneColor(tone);
-	const tip = makeWorstTip(worstLabel, worst, data && data.providers, stale);
+	const tip = jsx(QuotaMiniTip, { data, stale });
 	const button = jsxs("button", {
 		type: "button",
 		"aria-label": worstLabel + " " + (worstProvider?.display_accounts ? codexValue(worst) : worst + "%") + " · Open Quota pane",
 		className:
 			"inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer hover:bg-(--chrome-action-hover) transition-colors",
 		onClick: () => {
-			if (typeof host.navigate === "function") host.navigate("/quota");
+			if (window.location.hash === "#/quota") {
+				if (window.history.length > 1) window.history.back();
+				else if (typeof host.navigate === "function") host.navigate("/");
+			} else if (typeof host.navigate === "function") {
+				host.navigate("/quota");
+			}
 		},
 		children: [
 			jsx("span", {
@@ -1270,7 +1403,7 @@ function ProviderChip({ pid, provider }) {
 	const tone = provider?.display_accounts ? toneForRemaining(r) : providerTone(provider);
 	const dot = toneColor(tone);
 	const label = providerDisplayName(pid, provider);
-	const tip = makeProviderTip(pid, provider);
+	const chipTip = jsx(QuotaMiniTip, { data: { providers: { [pid]: provider } }, stale: false });
 	const button = jsxs(
 		"button",
 		{
@@ -1281,7 +1414,12 @@ function ProviderChip({ pid, provider }) {
 				"text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground transition-colors",
 			),
 			onClick: () => {
-				if (typeof host.navigate === "function") host.navigate("/quota");
+				if (window.location.hash === "#/quota") {
+					if (window.history.length > 1) window.history.back();
+					else if (typeof host.navigate === "function") host.navigate("/");
+				} else if (typeof host.navigate === "function") {
+					host.navigate("/quota");
+				}
 			},
 			children: [
 				jsx("span", { className: "inline-block h-1.5 w-1.5 rounded-full", style: { background: dot } }),
@@ -1290,7 +1428,7 @@ function ProviderChip({ pid, provider }) {
 			],
 		},
 	);
-	return jsx(QuotaTip, { label: tip, children: button });
+	return jsx(QuotaTip, { label: chipTip, children: button });
 }
 
 // Keep other providers' window details; Codex uses its compact account summary.
@@ -1351,24 +1489,31 @@ function providerWindowLines(pid, provider) {
 
 function StatusBar() {
 	const showStatusBar = useValue(showStatusBarAtom);
-	const mode = useValue(statusbarModeAtom);
-	const { data, isError, isPlaceholderData } = useQuota();
+	const { data, isError, isPlaceholderData, isFetching } = useQuota();
 	const stale = useCodexStale(data, isError || isPlaceholderData);
 	if (!showStatusBar) return null;
-	if (mode === "worst") return jsx(QuotaChipWithBar, {});
 	if (!data || !data.providers)
 		return jsx(StatusDot, { tone: "muted" });
-	// Keep unavailable saved accounts visible alongside healthy siblings.
-	// Unconfigured providers remain hidden; visibility settings apply to all accounts.
-	const entries = statusEntries(data.providers, stale)
-		.filter(([pid]) => (!isError || pid === "openai-codex") && isProviderEnabled(pid))
-		.filter(([, p]) => p?.display_accounts || isConfigured(p));
-	if (entries.length === 0) return jsx(StatusDot, { tone: "muted" });
-	return jsx("span", {
-		className: "inline-flex h-full items-center",
-		children: entries.map(([pid, p]) =>
-			jsx(ProviderChip, { pid, provider: p, key: pid }),
-		),
+	const tip = jsx(QuotaMiniTip, { data, stale, isRefreshing: isFetching, isError });
+	// The compact bar intentionally advertises only a generic Quota entry;
+	// hover hides nothing and the full dashboard is one click away.
+	return jsx(QuotaTip, {
+		label: tip,
+		children: jsx("button", {
+			type: "button",
+			"aria-label": "Quota · Open Quota pane",
+			className:
+				"inline-flex h-full items-center gap-1.5 px-1.5 text-[0.6875rem] text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) hover:text-foreground transition-colors",
+			onClick: () => {
+				if (window.location.hash === "#/quota") {
+					if (window.history.length > 1) window.history.back();
+					else if (typeof host.navigate === "function") host.navigate("/");
+				} else if (typeof host.navigate === "function") {
+					host.navigate("/quota");
+				}
+			},
+			children: [jsx(icons.Activity, { className: "h-3.5 w-3.5" }), jsx("span", { children: "Quota" })],
+		}),
 	});
 }
 
@@ -1630,6 +1775,33 @@ function ShowDockedPaneControl() {
 	});
 }
 
+function ShowSidebarNavControl() {
+	const t = usePluginI18n(ID);
+	const show = useValue(showSidebarNavAtom);
+	return jsxs("div", {
+		className: "flex flex-col gap-1",
+		children: [
+			jsxs("div", {
+				className: "flex items-center justify-between gap-2",
+				children: [
+					jsx("span", {
+						className: "text-xs text-(--ui-text-secondary)",
+						children: t("showSidebarNavLabel"),
+					}),
+					jsx(Switch, {
+						checked: show,
+						onCheckedChange: (v) => setShowSidebarNav(v),
+					}),
+				],
+			}),
+			jsx("div", {
+				className: "text-[0.625rem] text-(--ui-text-quaternary)",
+				children: t("showSidebarNavHint"),
+			}),
+		],
+	});
+}
+
 function RefreshIntervalControl() {
 	const t = usePluginI18n(ID);
 	const seconds = useValue(refreshIntervalAtom);
@@ -1787,6 +1959,7 @@ function QuotaSettings() {
 			jsx(ShowStatusBarControl, {}),
 			jsx(StatusbarModeControl, {}),
 			jsx(ShowDockedPaneControl, {}),
+			jsx(ShowSidebarNavControl, {}),
 			jsx(PaneDetailControl, {}),
 			jsx(ResetFormatControl, {}),
 			jsx(RefreshIntervalControl, {}),
@@ -1917,19 +2090,30 @@ function QuotaPane() {
 					jsxs("div", {
 						className: "flex items-center gap-1",
 						children: [
-							view === "settings"
+							view !== "settings" && data?.fetched_at ? jsx("span", {
+								className: "text-[0.6875rem] text-(--ui-text-quaternary)",
+								title: data.fetched_at,
+								children: t("fetched", checkedDateTime(data.fetched_at) || data.fetched_at),
+							}) : null,
+						view === "settings"
 								? jsx("button", {
 										type: "button",
 										className: cn(
 											"inline-flex h-6 w-6 items-center justify-center rounded",
 											"text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground transition-colors",
 										),
-										title: t("backTip"),
+										title: t("exitSettingsTip"),
 										onClick: () => setView("list"),
-										children: jsx(SdkIcon, {
-											name: "ArrowLeft",
-											className: "h-3.5 w-3.5",
-											fallback: "‹",
+										children: jsxs("span", {
+											className: "inline-flex items-center gap-1",
+											children: [
+												jsx(SdkIcon, {
+													name: "ArrowLeft",
+													className: "h-3.5 w-3.5",
+													fallback: "‹",
+												}),
+												jsx("span", { children: t("exitSettingsButton") }),
+											],
 										}),
 									})
 								: jsxs("div", {
@@ -2037,6 +2221,33 @@ function registerDockedPane() {
 	}
 }
 
+let _navDisposer = null;
+
+function clearSidebarNav() {
+	if (!_navDisposer) return;
+	try {
+		_navDisposer();
+	} catch {
+		/* noop */
+	}
+	_navDisposer = null;
+}
+
+function registerSidebarNav() {
+	clearSidebarNav();
+	if (!CTX || !showSidebarNavAtom.get()) return;
+	try {
+		_navDisposer = CTX.register({
+			id: "nav",
+			area: SIDEBAR_NAV_AREA,
+			order: 80,
+			data: { codicon: "pulse", label: "Quota", path: "/quota" },
+		});
+	} catch {
+		_navDisposer = null;
+	}
+}
+
 export default {
 	id: ID,
 	name: "Quota Widget",
@@ -2045,6 +2256,7 @@ export default {
 		CTX = ctx;
 		applyStoredAll();
 		registerDockedPane();
+		registerSidebarNav();
 		ctx.i18n.register({
 			en: {
 				paneTitle: "Quota",
@@ -2057,6 +2269,8 @@ export default {
 				refreshTip: "Refresh quota",
 				settingsTip: "Quota settings",
 				backTip: "Back to quota",
+				exitSettingsTip: "Exit settings",
+				exitSettingsButton: "Exit",
 				loading: "Loading…",
 				error: "Quota backend unavailable",
 				empty: "No quota data yet.",
@@ -2085,6 +2299,8 @@ export default {
 				showStatusBarHint:
 					"The Hermes status bar must also be visible (⌘K → Toggle status bar).",
 				showDockedPaneLabel: "Show docked quota pane",
+				showSidebarNavLabel: "Show Quota in sidebar",
+				showSidebarNavHint: "Adds a Quota row to the left sidebar. Off by default; the status bar and /quota page still work.",
 				settingsButton: "Settings",
 				refreshIntervalLabel: "Refresh interval",
 				refreshIntervalHint: (seconds, min, max) =>
@@ -2114,12 +2330,7 @@ export default {
 			render: () => jsx(QuotaPane, {}),
 		});
 
-		// Sidebar nav row.
-		ctx.register({
-			id: "nav",
-			area: SIDEBAR_NAV_AREA,
-			order: 80,
-			data: { codicon: "pulse", label: "Quota", path: "/quota" },
-		});
+		// Sidebar nav row is registered via registerSidebarNav() so the
+		// Settings toggle can add or remove it without a reload.
 	},
 };

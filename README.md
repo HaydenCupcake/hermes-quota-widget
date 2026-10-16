@@ -14,8 +14,8 @@ See provider quotas, reset times and account balances in Hermes Desktop and the 
 ## Install
 
 ```bash
-git clone https://github.com/rarf/hermes-quota-plugin.git
-cd hermes-quota-plugin
+git clone https://github.com/HaydenCupcake/hermes-quota-widget.git
+cd hermes-quota-widget
 ./install.sh
 ```
 

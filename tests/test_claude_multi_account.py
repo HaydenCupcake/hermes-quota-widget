@@ -33,7 +33,7 @@ if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import quota_providers.builtin as builtin  # noqa: E402
-from widget_harness import nodes, render, text  # noqa: E402,F401
+from widget_harness import nodes, render, text, tooltip_text  # noqa: E402,F401
 
 
 # --- helpers -----------------------------------------------------------------
@@ -820,7 +820,7 @@ class WidgetAccountRenderTests(unittest.TestCase):
                         windows=[],
                         details=["account #2 needs a non-empty string 'configDir'."])
         tree = render(component="chip", id="anthropic:work", provider=provider)
-        tip = tree["props"]["label"]["props"]["children"]
+        tip = tooltip_text(tree)
         self.assertIn("unavailable (config-invalid)", tip)
         self.assertIn("needs a non-empty string 'configDir'", tip)
 
