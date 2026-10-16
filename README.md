@@ -1,6 +1,7 @@
 # Hermes Quota
 
 ![Quota in Hermes Desktop](docs/images/quota-app.png)
+![Quota docked pane](docs/images/quota-pane.png)
 
 See provider quotas, reset times and account balances in Hermes Desktop and the CLI—without adding network calls to every UI render.
 
