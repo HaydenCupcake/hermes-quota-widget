@@ -71,3 +71,20 @@ class WidgetTooltipTests(unittest.TestCase):
                 self.assertEqual(tip.count('58%'), 1)
                 self.assertIn('2 accounts', tip)
                 self.assertEqual(len(windows(props['label'])), 2)
+
+    def test_hover_dashboard_omits_providers_disabled_in_settings(self):
+        data = {'age_s': 0, 'providers': {
+            'openai-codex': {'windows': [{'label': 'Session', 'used_percent': 21}]},
+            'copilot': {'windows': [{'label': 'Premium requests', 'used_percent': 50}]},
+            'openrouter': {'windows': [{'label': 'Credits', 'used_percent': 10}]}}}
+        visible = tooltip_text(render(component='status', data=data))
+        self.assertIn('Copilot', visible)
+        self.assertIn('OpenRouter', visible)
+        hidden = tooltip_text(render(component='status', data=data, disabled=['copilot', 'openrouter']))
+        self.assertIn('OpenAI Codex', hidden)
+        self.assertIn('Session', hidden)
+        self.assertNotIn('Copilot', hidden)
+        self.assertNotIn('OpenRouter', hidden)
+        pane = text(render(data=data, disabled=['copilot', 'openrouter']))
+        self.assertNotIn('Copilot', pane)
+        self.assertNotIn('OpenRouter', pane)

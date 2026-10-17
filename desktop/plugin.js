@@ -1123,6 +1123,9 @@ function QuotaMiniTip({ data, providers, stale = false, isRefreshing = false, is
 	const source = data?.providers || Object.fromEntries(providers || []);
 	const groups = new Map();
 	for (const [pid, record] of providerEntries(source)) {
+		// Mirror the pane's Overview: a provider switched off in Settings
+		// must not reappear in the hover dashboard.
+		if (!isProviderEnabled(pid)) continue;
 		const base = baseProviderId(pid);
 		if (!groups.has(base)) groups.set(base, []);
 		groups.get(base).push({ pid, record });
