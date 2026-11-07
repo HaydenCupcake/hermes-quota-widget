@@ -1244,9 +1244,9 @@ function QuotaTip({ label, children }) {
 					side: "top", align: "start", boundary: "viewport",
 					style: {
 						maxWidth: "calc(100vw - 24px)", padding: "10px 12px", borderRadius: 10,
-						background: "var(--ui-editor-surface-background)", color: "var(--ui-text-primary)",
+						background: "var(--ui-bg-elevated)", color: "var(--ui-text-primary)",
 						border: "1px solid var(--ui-stroke-primary)", pointerEvents: "auto",
-						"--foreground": "var(--ui-editor-surface-background)",
+						"--foreground": "var(--ui-bg-elevated)",
 						boxShadow: "0 8px 28px color-mix(in srgb, var(--ui-text-primary) 12%, transparent)",
 					},
 					children: jsx("div", {
