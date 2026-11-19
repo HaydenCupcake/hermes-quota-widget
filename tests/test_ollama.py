@@ -267,10 +267,20 @@ class PlanTests(unittest.TestCase):
 class ResetDerivationTests(unittest.TestCase):
     """No reset is published; it is derived from CreatedAt per Ollama's own
     documented rule. Verified against the live account: CreatedAt 2026-02-22
-    with the settings page reading "Resets in 2 weeks" on 2026-10-03."""
+    with the settings page reading "Resets in 2 weeks" on 2026-10-03.
+
+    The live-verified expectations are pinned to that verification instant
+    (LIVE_VERIFIED_NOW), not the wall clock: the derivation advances every
+    month, so a live-clock assertion of an October result silently rots in
+    November (triaged in t_022cc145). The derivation under test is unchanged.
+    """
+
+    LIVE_VERIFIED_NOW = datetime.datetime(2026, 10, 3, 12, 0,
+                                          tzinfo=datetime.timezone.utc)
 
     def test_live_account_reset_uses_monthly_anniversary(self):
-        got = ollama._next_monthly_reset("2026-02-22T09:45:23.470675Z")
+        got = ollama._next_monthly_reset("2026-02-22T09:45:23.470675Z",
+                                         self.LIVE_VERIFIED_NOW)
         self.assertEqual(got, "2026-10-22T00:00:00Z")
 
     def test_always_returns_a_future_date(self):
@@ -297,9 +307,23 @@ class ResetDerivationTests(unittest.TestCase):
                         .startswith("2026-10-05"))
 
     def test_short_month_start_clamps_rather_than_skipping(self):
-        got = ollama._next_monthly_reset("2024-01-31T00:00:00Z")
-        self.assertIsNotNone(got)
-        self.assertRegex(got, r"^2026-10-3[01]T00:00:00Z$")
+        # A Jan-31 start clamps to the last day that exists in a shorter
+        # month rather than skipping it. Pinned clocks exercise a 31-day
+        # month (day kept), a 30-day month, and February common/leap --
+        # the original October-only regex never reached a clamping month.
+        for now, expected in (
+            (datetime.datetime(2026, 10, 3, 12, tzinfo=datetime.timezone.utc),
+             "2026-10-31T00:00:00Z"),
+            (datetime.datetime(2026, 11, 3, 12, tzinfo=datetime.timezone.utc),
+             "2026-11-30T00:00:00Z"),
+            (datetime.datetime(2027, 2, 3, 12, tzinfo=datetime.timezone.utc),
+             "2027-02-28T00:00:00Z"),
+            (datetime.datetime(2028, 2, 3, 12, tzinfo=datetime.timezone.utc),
+             "2028-02-29T00:00:00Z"),
+        ):
+            with self.subTest(now=now.isoformat()):
+                got = ollama._next_monthly_reset("2024-01-31T00:00:00Z", now)
+                self.assertEqual(got, expected)
 
     def test_garbage_yields_no_reset(self):
         for bad in (None, "", "garbage", 7, [], {}, "2026-13-45T99:99:99Z"):
@@ -307,7 +331,16 @@ class ResetDerivationTests(unittest.TestCase):
                 self.assertIsNone(ollama._next_monthly_reset(bad))
 
     def test_reset_reaches_the_window(self):
-        r = _fetch(REAL_FREE_TIER)
+        # The fetch path calls the derivation with no clock argument. Wrap
+        # the real function at that one seam to pin the live-verified
+        # instant, so the wiring assertion stays exact in every month; the
+        # derivation itself runs unstubbed.
+        derive = ollama._next_monthly_reset
+        with mock.patch.object(
+                ollama, "_next_monthly_reset",
+                side_effect=lambda created: derive(created,
+                                                   self.LIVE_VERIFIED_NOW)):
+            r = _fetch(REAL_FREE_TIER)
         self.assertIsNotNone(r.windows[0].reset_at)
         self.assertTrue(r.windows[0].reset_at.startswith("2026-10-22"))
 
@@ -568,11 +601,18 @@ class ReviewFollowupTests(unittest.TestCase):
 
     def test_the_real_account_still_derives_its_own_day(self):
         """CreatedAt 2026-02-22 is the account behind the capture; clamping
-        must not shift a day that is genuinely ahead."""
-        now = datetime.datetime.now(datetime.timezone.utc)
-        got = ollama._next_monthly_reset("2026-02-22T09:45:23Z")
-        self.assertEqual(got[:7], now.strftime("%Y-%m") if now.day < 22 else "2026-10")
-        self.assertTrue(got.endswith("T00:00:00Z"))
+        must not shift a day that is genuinely ahead. Pinned clocks on both
+        sides of the anniversary: the old live-clock assertion hardcoded
+        "2026-10" for the after-day branch and would red from 2026-11-22."""
+        for now, expected in (
+            (datetime.datetime(2026, 10, 3, 12, tzinfo=datetime.timezone.utc),
+             "2026-10-22T00:00:00Z"),
+            (datetime.datetime(2026, 10, 25, 12, tzinfo=datetime.timezone.utc),
+             "2026-11-22T00:00:00Z"),
+        ):
+            with self.subTest(now=now.isoformat()):
+                got = ollama._next_monthly_reset("2026-02-22T09:45:23Z", now)
+                self.assertEqual(got, expected)
 
     # -- 2. both requests share one deadline -------------------------------
     def test_the_two_requests_share_one_deadline(self):
