@@ -58,7 +58,7 @@ export const PANES_AREA='',ROUTES_AREA='',SIDEBAR_NAV_AREA='',STATUSBAR_AREAS={r
    await page.goto('http://quota.test/');
    const tokens=mode==='dark'?theme.tokens:{...theme.tokens,'--ui-editor-surface-background':'#ffffff','--ui-text-primary':'#18202b','--ui-text-secondary':'#465365','--ui-text-tertiary':'#586575','--ui-stroke-secondary':'#e0e5ec','--ui-stroke-primary':'#c7d0dc','--ui-bg-card':'#f6f8fa','--ui-accent':'#1769c2','--ui-red':'#c53030','--ui-yellow':'#946500'};
    await page.evaluate(tokens=>{for(const[k,v]of Object.entries(tokens))document.documentElement.style.setProperty(k,v);},tokens);
-   const button=page.getByRole('button');await button.waitFor();assert.equal(await button.count(),1);assert.equal((await button.innerText()).trim(),'Quota');
+   const button=page.getByRole('button');await button.waitFor();assert.equal(await button.count(),1);assert.equal((await button.innerText()).trim(),"Usage Quota II' Turbo");
    assert.equal(await page.locator('[data-graph-icon]').count(),1);
    await button.hover();const bubble=page.locator('[data-slot="tooltip-content"]');await bubble.waitFor({state:'visible',timeout:4000});
    assert.equal(await bubble.locator('[data-quota-mini-provider]').count(),17,'Every provider represented');

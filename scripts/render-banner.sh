@@ -42,7 +42,7 @@ magick -size 1200x600 gradient:'#141b25-#0a0d11' \
   -font Adwaita-Sans -pointsize 19 -fill '#93a0b0' \
   -annotate +62+70 'HERMES DESKTOP PLUGIN' \
   -font Adwaita-Sans-Bold -pointsize 84 -fill '#f4f6f8' \
-  -annotate +60+168 'Hermes Quota' \
+  -annotate +60+168 "Usage Quota II' Turbo" \
   -font Adwaita-Sans -pointsize 30 -fill '#a7b2c1' \
   -annotate +62+226 'Per-provider quota and rate limits,' \
   -annotate +62+266 'in the desktop pane and the status bar.' \
@@ -50,7 +50,7 @@ magick -size 1200x600 gradient:'#141b25-#0a0d11' \
   -annotate +62+328 'Copilot · OpenAI Codex · OpenCode Go · Grok · Gemini' \
   -annotate +62+360 'Anthropic · Kimi · Nous Portal · OpenRouter · Z.ai' \
   -pointsize 20 -fill '#6d7887' \
-  -annotate +62+524 "v${VERSION}  ·  community plugin  ·  github.com/rarf/hermes-quota-plugin" \
+  -annotate +62+524 "v${VERSION}  ·  community plugin  ·  github.com/HaydenCupcake/hermes-quota-widget" \
   /tmp/_bg.png
 
 magick /tmp/_bg.png /tmp/_pane-shadow.png -gravity NorthEast -geometry +44+40 \

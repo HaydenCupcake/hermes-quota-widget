@@ -56,7 +56,7 @@ class WidgetTooltipTests(unittest.TestCase):
                 self.assertEqual(len(tips), 1)
                 self.assertNotIn('title', buttons[0]['props'])
                 self.assertTrue(buttons[0]['props'].get('aria-label'))
-                self.assertEqual(text(buttons[0]).strip(), 'Quota')
+                self.assertEqual(text(buttons[0]).strip(), "Usage Quota II' Turbo")
                 props = tips[0]['props']
                 self.assertEqual(props['side'], 'top')
                 self.assertEqual(props['align'], 'start')

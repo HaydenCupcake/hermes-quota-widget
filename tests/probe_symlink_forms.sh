@@ -141,7 +141,7 @@ run_case() {
     bad "$label -> $got (expected $expect)"
     cat "$log"
   fi
-  if grep -q "Quota uninstall failed" "$log"; then
+  if grep -q "Usage Quota II' Turbo uninstall failed" "$log"; then
     bad "$label entered ERR rollback"
   fi
 }

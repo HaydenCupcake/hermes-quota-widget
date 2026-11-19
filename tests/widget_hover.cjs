@@ -83,7 +83,7 @@ export const icons={}, PANES_AREA='',ROUTES_AREA='',SIDEBAR_NAV_AREA='',STATUSBA
         assert.ok(evidence.label.indexOf('Synthetic Amber')<evidence.label.indexOf('Synthetic Blue'));
         for(const part of ['● Synthetic Amber · 79% left','○ Synthetic Blue · 58% left', ...(single?['Session · resets in']:['Session · 79% left · resets in','Weekly · 90% left · resets in','Weekly · 70% left · resets in'])]) assert.ok(evidence.label.includes(part),part);
         for(const part of ['OpenAI Codex · remaining','Shown in status bar','Click for details']) assert.ok(!evidence.label.includes(part),part);
-        for(const old of ['priority-eligible','inference routing','selected for display','Generic Session','Plan:','2099-','Click to open Quota pane']) assert.ok(!evidence.label.includes(old),old);
+        for(const old of ['priority-eligible','inference routing','selected for display','Generic Session','Plan:','2099-','Click to open Usage Quota II\' Turbo pane']) assert.ok(!evidence.label.includes(old),old);
         assert.equal(evidence.label.split('\n').length, 6-(single?2:0));
         if(single) for(const value of ['79% left','58% left']) assert.equal(evidence.label.split(value).length-1,1, 'No duplicated single-window remaining');
         assert.ok(evidence.bounds.width < 400, 'Compact tooltip must not become a wide banner');

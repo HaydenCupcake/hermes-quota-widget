@@ -7,13 +7,13 @@
 - Hover for the full breakdown: **every provider and every window** (Session,
   Spark 5h, Spark Weekly…) with `% left` and time-to-reset.
 
-### Quota pane
+### Usage Quota II' Turbo pane
 
 Reachable three ways: the **docked pane** (`Placement: right`, 300px, toggled in
-Settings), the **`/quota` route** and the **sidebar nav row** (`Quota`, pulse
+Settings), the **`/quota` route** and the **sidebar nav row** (`Usage Quota II' Turbo`, pulse
 icon).
 
-![Quota pane](images/quota-pane.png)
+![Usage Quota II' Turbo pane](images/quota-pane.png)
 
 - One card per provider with the official brand icon, a tonal progress bar, the
   plan badge and per-window rows.
@@ -31,7 +31,7 @@ icon).
 
 ### Settings
 
-Everything lives in the pane's **Quota Settings** view and persists locally:
+Everything lives in the pane's **Usage Quota II' Turbo · Settings** view and persists locally:
 
 | Setting | Values | Default |
 | --- | --- | --- |

@@ -26,7 +26,7 @@ Typed failure reasons surfaced by a refresh: `chrome-tcc-denied`,
 
 The renderer loads JavaScript on the **computer running Hermes Desktop**; quota CLI calls execute on the connected gateway. Updating the gateway's `desktop-plugins/quota/plugin.js` does not update a separate client computer.
 
-1. Check **Widget** and **backend** versions in the Quota pane. Multi-account names and icons require widget **2.10.0 or newer**.
+1. Check **Widget** and **backend** versions in the Usage Quota II' Turbo pane. Multi-account names and icons require widget **2.10.0 or newer**.
 2. Update the widget on the Desktop computer from the same approved build as the backend, not merely an older catalog pin.
 3. Run **Reload desktop plugins** in the Desktop command palette, or reopen the app if the client version has no reload command. This reloads client contributions; it is not a gateway restart.
 4. If it remains wrong, report the two versions and the visible account heading (no credential files). Rendering source/tests does not prove the running client adopted it.

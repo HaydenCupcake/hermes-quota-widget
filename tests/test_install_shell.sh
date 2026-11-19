@@ -247,7 +247,7 @@ else
   cat "$RUN_ROOT/uninstall-macos-link.log"
 fi
 [ ! -e "$QUOTA_TEST_READLINK_F_MARKER" ] && ok "portable ownership check did not call readlink -f" || bad "uninstall attempted unsupported readlink -f"
-if grep -q "Quota uninstall failed" "$RUN_ROOT/uninstall-macos-link.log"; then
+if grep -q "Usage Quota II' Turbo uninstall failed" "$RUN_ROOT/uninstall-macos-link.log"; then
   bad "readlink probe entered ERR rollback"
 else
   ok "readlink probe did not enter ERR rollback"

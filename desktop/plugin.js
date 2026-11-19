@@ -137,7 +137,7 @@ const SHOW_STATUSBAR_KEY = "showStatusBar";
 const SHOW_STATUSBAR_DEFAULT = true;
 const SHOW_DOCKED_PANE_KEY = "showDockedPane";
 const SHOW_DOCKED_PANE_DEFAULT = false;
-// Sidebar nav is opt-in: the Quota row stays out of the left sidebar until
+// Sidebar nav is opt-in: the Usage Quota II' Turbo row stays out of the left sidebar until
 // the user turns it on in Settings.
 const SHOW_SIDEBAR_NAV_KEY = "showSidebarNav";
 const SHOW_SIDEBAR_NAV_DEFAULT = false;
@@ -721,7 +721,7 @@ function formatAgeSeconds(seconds) {
 // ---- update self-check (like Hermes's own) ---------------------------------
 
 const REPO_API_LATEST =
-	"https://api.github.com/repos/rarf/hermes-quota-plugin/commits/master";
+	"https://api.github.com/repos/HaydenCupcake/hermes-quota-widget/commits/master";
 
 // Compare the installed commit stamp against GitHub master. One cheap
 // request per hour, cached in storage; never blocks rendering. The cache
@@ -805,7 +805,7 @@ function UpdateBanner({ update }) {
 			"bg-(--chrome-action) text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) transition-colors",
 		),
 		onClick: () =>
-			host.openExternal?.("https://github.com/rarf/hermes-quota-plugin"),
+			host.openExternal?.("https://github.com/HaydenCupcake/hermes-quota-widget"),
 		children: [
 			jsx("span", {
 				className: "font-medium",
@@ -1170,7 +1170,7 @@ function QuotaMiniTip({ data, providers, stale = false, isRefreshing = false, is
 		style: { display: "flex", flexDirection: "column", gap: 8, width: "min(428px, calc(100vw - 48px))", minWidth: 0, fontSize: 11, lineHeight: "1.35", whiteSpace: "normal", color: "var(--ui-text-primary)", fontWeight: 400 },
 		children: [
 			jsxs("div", { style: { ...rowStyle, paddingBottom: 6, borderBottom: line }, children: [
-				jsx("span", { style: { fontSize: 12, fontWeight: 650 }, children: "Quota overview" }),
+				jsx("span", { style: { fontSize: 12, fontWeight: 650 }, children: "Usage Quota II' Turbo overview" }),
 				jsxs("span", { style: { display: "flex", alignItems: "center", gap: 5, color: stale ? "var(--ui-yellow)" : secondary, fontSize: 10 }, children: [
 					jsx("span", { style: { width: 5, height: 5, borderRadius: "50%", background: stale ? "var(--ui-yellow)" : "var(--ui-accent)" } }),
 					isError ? "Refresh failed · retrying" : isRefreshing ? "Refreshing…" : stale ? "Cached · awaiting refresh" : data?.fetched_at ? `Checked ${checkedDateTime(data.fetched_at) || data.fetched_at}` : "No refresh recorded",
@@ -1224,7 +1224,7 @@ function QuotaMiniTip({ data, providers, stale = false, isRefreshing = false, is
 			!groups.size ? jsx("div", { style: { color: muted, padding: "4px 0" }, children: "Loading quota…" }) : null,
 			jsxs("div", { style: { ...rowStyle, borderTop: line, paddingTop: 6, fontSize: 10, color: muted }, children: [
 				jsx("span", { title: data?.fetched_at, children: data?.fetched_at ? `Checked ${checkedDateTime(data.fetched_at) || data.fetched_at}` : "No refresh recorded" }),
-				jsx("span", { children: "Open the Quota pane →" }),
+				jsx("span", { children: "Open the Usage Quota II' Turbo pane →" }),
 			] }),
 		],
 	});
@@ -1297,7 +1297,7 @@ function QuotaChipWithBar() {
 	const tip = jsx(QuotaMiniTip, { data, stale });
 	const button = jsxs("button", {
 		type: "button",
-		"aria-label": worstLabel + " " + (worstProvider?.display_accounts ? codexValue(worst) : worst + "%") + " · Open Quota pane",
+		"aria-label": worstLabel + " " + (worstProvider?.display_accounts ? codexValue(worst) : worst + "%") + " · Open Usage Quota II' Turbo pane",
 		className:
 			"inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer hover:bg-(--chrome-action-hover) transition-colors",
 		onClick: () => {
@@ -1411,7 +1411,7 @@ function ProviderChip({ pid, provider }) {
 		"button",
 		{
 			type: "button",
-			"aria-label": `${label} ${value} · Open Quota pane`,
+			"aria-label": `${label} ${value} · Open Usage Quota II' Turbo pane`,
 			className: cn(
 				"inline-flex h-full items-center gap-1 px-1.5 text-[0.6875rem]",
 				"text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground transition-colors",
@@ -1436,7 +1436,7 @@ function ProviderChip({ pid, provider }) {
 
 // Keep other providers' window details; Codex uses its compact account summary.
 function makeWorstTip(worstLabel, worst, providersObj, stale = false) {
-	if (!providersObj) return `Quota · lowest ${worst}% (${worstLabel})`;
+	if (!providersObj) return `Usage Quota II' Turbo · lowest ${worst}% (${worstLabel})`;
 	const blocks = [];
 	let hasCodex = false;
 	for (const [pid, p] of statusEntries(providersObj, stale)) {
@@ -1445,10 +1445,10 @@ function makeWorstTip(worstLabel, worst, providersObj, stale = false) {
 		const lines = p?.display_accounts ? [makeProviderTip(pid, p)] : providerWindowLines(pid, p);
 		if (lines.length) blocks.push(lines.join("\n"));
 	}
-	if (blocks.length === 0) return `Quota · lowest ${worst}% (${worstLabel})`;
+	if (blocks.length === 0) return `Usage Quota II' Turbo · lowest ${worst}% (${worstLabel})`;
 	if (hasCodex && blocks.length === 1) return blocks[0];
 
-	return `Quota breakdown:\n${blocks.join("\n")}${hasCodex ? "" : "\nClick to open Quota pane"}`;
+	return `Usage Quota II' Turbo breakdown:\n${blocks.join("\n")}${hasCodex ? "" : "\nClick to open Usage Quota II' Turbo pane"}`;
 }
 
 // Build a rich multiline tip for a single provider: lists ALL its windows
@@ -1461,7 +1461,7 @@ function makeProviderTip(pid, provider) {
 	if (provider.unavailable_reason) {
 		// Preserve actionable diagnostics alongside the reason code.
 		const lines = [`${name}: unavailable (${provider.unavailable_reason})`, ...details];
-		lines.push("Click to open Quota pane");
+		lines.push("Click to open Usage Quota II' Turbo pane");
 		return lines.join("\n");
 	}
 	const lines = providerWindowLines(pid, provider);
@@ -1471,7 +1471,7 @@ function makeProviderTip(pid, provider) {
 	if (provider.plan) lines.unshift(`Plan: ${provider.plan}`);
 	lines.unshift(name);
 	if (details.length) lines.push(...details);
-	lines.push("Click to open Quota pane");
+	lines.push("Click to open Usage Quota II' Turbo pane");
 	return lines.join("\n");
 }
 
@@ -1498,13 +1498,13 @@ function StatusBar() {
 	if (!data || !data.providers)
 		return jsx(StatusDot, { tone: "muted" });
 	const tip = jsx(QuotaMiniTip, { data, stale, isRefreshing: isFetching, isError });
-	// The compact bar intentionally advertises only a generic Quota entry;
+	// The compact bar intentionally advertises only a generic product entry;
 	// hover hides nothing and the full dashboard is one click away.
 	return jsx(QuotaTip, {
 		label: tip,
 		children: jsx("button", {
 			type: "button",
-			"aria-label": "Quota · Open Quota pane",
+			"aria-label": "Usage Quota II' Turbo · Open Usage Quota II' Turbo pane",
 			className:
 				"inline-flex h-full items-center gap-1.5 px-1.5 text-[0.6875rem] text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) hover:text-foreground transition-colors",
 			onClick: () => {
@@ -1515,7 +1515,7 @@ function StatusBar() {
 					host.navigate("/quota");
 				}
 			},
-			children: [jsx(icons.Activity, { className: "h-3.5 w-3.5" }), jsx("span", { children: "Quota" })],
+			children: [jsx(icons.Activity, { className: "h-3.5 w-3.5" }), jsx("span", { children: "Usage Quota II' Turbo" })],
 		}),
 	});
 }
@@ -2211,7 +2211,7 @@ function registerDockedPane() {
 		_paneDisposer = CTX.register({
 			id: "pane",
 			area: PANES_AREA,
-			title: "quota",
+			title: "Usage Quota II' Turbo",
 			data: {
 				placement: "right",
 				dock: { pane: "workspace", pos: "right" },
@@ -2244,7 +2244,7 @@ function registerSidebarNav() {
 			id: "nav",
 			area: SIDEBAR_NAV_AREA,
 			order: 80,
-			data: { codicon: "pulse", label: "Quota", path: "/quota" },
+			data: { codicon: "pulse", label: "Usage Quota II' Turbo", path: "/quota" },
 		});
 	} catch {
 		_navDisposer = null;
@@ -2253,7 +2253,7 @@ function registerSidebarNav() {
 
 export default {
 	id: ID,
-	name: "Quota Widget",
+	name: "Usage Quota II' Turbo",
 	defaultEnabled: true,
 	register(ctx) {
 		CTX = ctx;
@@ -2262,20 +2262,20 @@ export default {
 		registerSidebarNav();
 		ctx.i18n.register({
 			en: {
-				paneTitle: "Quota",
-				settingsTitle: "Quota · Settings",
+				paneTitle: "Usage Quota II' Turbo",
+				settingsTitle: "Usage Quota II' Turbo · Settings",
 				chipTip: (pct, label, reset) =>
-					`Quota · lowest ${pct}% (${label})${reset ? ` · resets in ${reset}` : ""}`,
+					`Usage Quota II' Turbo · lowest ${pct}% (${label})${reset ? ` · resets in ${reset}` : ""}`,
 				providerTip: (label, pct, reset) =>
 					`${label} · ${pct}%${reset ? ` · resets in ${reset}` : ""}`,
 				popoverReset: (reset) => `resets in ${reset}`,
 				refreshTip: "Refresh quota",
-				settingsTip: "Quota settings",
-				backTip: "Back to quota",
+				settingsTip: "Usage Quota II' Turbo settings",
+				backTip: "Back to Usage Quota II' Turbo",
 				exitSettingsTip: "Exit settings",
 				exitSettingsButton: "Exit",
 				loading: "Loading…",
-				error: "Quota backend unavailable",
+				error: "Usage Quota II' Turbo backend unavailable",
 				empty: "No quota data yet.",
 				emptyHint: "Quota data is being initialized automatically…",
 				unavailable: (reason) => `unavailable (${reason})`,
@@ -2302,8 +2302,8 @@ export default {
 				showStatusBarHint:
 					"The Hermes status bar must also be visible (⌘K → Toggle status bar).",
 				showDockedPaneLabel: "Show docked quota pane",
-				showSidebarNavLabel: "Show Quota in sidebar",
-				showSidebarNavHint: "Adds a Quota row to the left sidebar. Off by default; the status bar and /quota page still work.",
+				showSidebarNavLabel: "Show Usage Quota II' Turbo in sidebar",
+				showSidebarNavHint: "Adds a Usage Quota II' Turbo row to the left sidebar. Off by default; the status bar and /quota page still work.",
 				settingsButton: "Settings",
 				refreshIntervalLabel: "Refresh interval",
 				refreshIntervalHint: (seconds, min, max) =>

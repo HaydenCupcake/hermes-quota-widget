@@ -104,7 +104,7 @@ rollback() {
     [ ! -e "$QUOTA_DESKTOP" ] || rm -rf "$QUOTA_DESKTOP"
     mv "$BACKUP_DESKTOP" "$QUOTA_DESKTOP" || true
   fi
-  echo "Quota uninstall failed; previous files and configuration were restored where possible." >&2
+  echo "Usage Quota II' Turbo uninstall failed; previous files and configuration were restored where possible." >&2
   exit "$status"
 }
 trap rollback ERR
@@ -143,7 +143,7 @@ if ! rm -rf "$BACKUP_PLUGIN" "$BACKUP_DESKTOP"; then
   echo "Warning: uninstall succeeded, but a temporary backup could not be removed: $STAGE_DIR" >&2
 fi
 
-printf '\nQuota plugin removed from %s\n' "$HOME_DIR"
+printf "\nUsage Quota II' Turbo plugin removed from %s\n" "$HOME_DIR"
 if [ "$REMOVED_LINKS" -gt 0 ]; then
   printf '%s\n' "Removed $REMOVED_LINKS per-profile plugin links."
 fi

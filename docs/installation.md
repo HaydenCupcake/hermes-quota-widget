@@ -3,8 +3,8 @@
 ## Source installation
 
 ```bash
-git clone https://github.com/rarf/hermes-quota-plugin.git
-cd hermes-quota-plugin
+git clone https://github.com/HaydenCupcake/hermes-quota-widget.git
+cd hermes-quota-widget
 ./install.sh
 ```
 
@@ -28,7 +28,7 @@ Use **Reload desktop plugins** for client JavaScript changes. A long-lived backe
 
 ## Updating
 
-Source installation: fetch the approved revision and re-run the installer only if its all-profile scope is acceptable. A catalog-managed installation follows its pinned revision; it does not automatically select an unreleased local candidate. An immutable `--ref` must be the full commit SHA and must be available from the requested source. Verify installed identity after any update rather than treating acceptance as success.
+Source installation: fetch the approved revision and re-run the installer only if its all-profile scope is acceptable. A pinned fork install follows no catalog entry: Hermes will not auto-update it, and `hermes plugins update quota` refuses a pinned checkout, printing the deliberate move command (`hermes plugins install <source> --force --ref <40-character commit SHA>`). An immutable `--ref` must be the full commit SHA and must be available from the requested source. Verify installed identity after any update rather than treating acceptance as success.
 
 ```bash
 hermes quota status --version-json

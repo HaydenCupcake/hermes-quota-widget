@@ -1,9 +1,9 @@
-# Hermes Quota
+# Usage Quota II' Turbo
 
-![Quota in Hermes Desktop](docs/images/quota-app.png)
-![Quota docked pane](docs/images/quota-pane.png)
+![Usage Quota II' Turbo in Hermes Desktop](docs/images/quota-app.png)
+![Usage Quota II' Turbo docked pane](docs/images/quota-pane.png)
 
-See provider quotas, reset times and account balances in Hermes Desktop and the CLI—without adding network calls to every UI render.
+**Usage Quota II' Turbo** shows provider quotas, reset times and account balances in Hermes Desktop and the CLI—without adding network calls to every UI render.
 
 ## What you get
 

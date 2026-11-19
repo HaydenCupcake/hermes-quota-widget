@@ -185,7 +185,7 @@ def main() -> int:
     if args.self_test:
         return self_test(scan_plugin)
 
-    result = scan_plugin(args.path.resolve(), source="rarf/hermes-quota-plugin/community")
+    result = scan_plugin(args.path.resolve(), source="HaydenCupcake/hermes-quota-widget/community")
 
     order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     findings = sorted(result.findings,

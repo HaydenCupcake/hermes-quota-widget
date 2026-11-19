@@ -248,7 +248,7 @@ class NullProviderRenderTests(unittest.TestCase):
     def test_null_window_does_not_crash_provider_tooltip(self):
         tree = render(component="chip", provider={"windows": [None], "details": []})
         self.assertIn("DeepSeek", text(tree))
-        self.assertIn("Quota pane", tooltip_text(tree))
+        self.assertIn("Usage Quota II' Turbo pane", tooltip_text(tree))
 
 
 if __name__ == "__main__":

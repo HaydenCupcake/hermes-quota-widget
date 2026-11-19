@@ -173,9 +173,9 @@ class CodexAccountsTests(unittest.TestCase):
         self.assertNotIn('accounts', record)
         for mode in ['all', 'worst']:
             tree = render(component='status', statusMode=mode, data={'age_s': 0, 'providers': {'openai-codex': record}})
-            # Status bar is a single generic Quota chip; the saved label and its
+            # Status bar is a single generic Usage Quota II' Turbo chip; the saved label and its
             # quota live in the hover dashboard, not the compact chip.
-            self.assertEqual(text(tree).strip(), 'Quota')
+            self.assertEqual(text(tree).strip(), "Usage Quota II' Turbo")
             self.assertNotIn('Synthetic Solo', text(tree))
             self.assertNotIn('Account 1', text(tree))
             self.assertIn('79% left', tooltip_text(tree))
@@ -404,7 +404,7 @@ class CodexAccountsTests(unittest.TestCase):
         tree = render(component="status", data={"age_s": 0, "providers": {"openai-codex": qc._result_to_record(result)}})
         chips = [n for n in nodes(tree) if n.get("type") == "button"]
         self.assertEqual(len(chips), 1)
-        self.assertEqual(text(chips[0]).strip(), 'Quota')
+        self.assertEqual(text(chips[0]).strip(), "Usage Quota II' Turbo")
         tip = tooltip_text(tree)
         self.assertLess(tip.index('Synthetic Amber'), tip.index('Synthetic Blue'))
         for expected in ('79% left', '58% left'):
@@ -415,7 +415,7 @@ class CodexAccountsTests(unittest.TestCase):
 class CodexWidgetTests(unittest.TestCase):
     """Dashboard contract: every Codex account is visible in the hover tooltip.
 
-    The status bar is a single generic Quota chip; the tooltip groups all
+    The status bar is a single generic Usage Quota II' Turbo chip; the tooltip groups all
     accounts under one provider header with per-account rows. These tests
     assert that every saved account keeps its identity, ordering, and honest
     quota state in that dashboard.
@@ -478,7 +478,7 @@ class CodexWidgetTests(unittest.TestCase):
             'anthropic': {'windows': [{'label': 'Session', 'used_percent': 60}]}}}
         tree = render(component='status', data=data)
         buttons = [n for n in nodes(tree) if n.get('type') == 'button']
-        self.assertEqual(len(buttons), 1, 'Status bar stays a single generic Quota chip')
+        self.assertEqual(len(buttons), 1, "Status bar stays a single generic Usage Quota II' Turbo chip")
         tip = next(n for n in nodes(tree) if n.get('type') == 'Tip')
         codex_section = next(n for n in nodes(tip['props']['label'])
                              if n['props'].get('data-quota-mini-provider') == 'openai-codex')

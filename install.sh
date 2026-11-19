@@ -127,7 +127,7 @@ rollback() {
     hermes_config_restore "${profiles[$i]}" plugins.disabled "${before_disabled_present[$i]}" "${before_disabled[$i]}" || true
     i=$((i + 1))
   done
-  echo "Quota installation failed; previous files and configuration were restored where possible." >&2
+  echo "Usage Quota II' Turbo installation failed; previous files and configuration were restored where possible." >&2
   exit "$status"
 }
 trap rollback ERR
@@ -212,7 +212,7 @@ for link in "${CREATED_LINKS[@]+"${CREATED_LINKS[@]}"}"; do
   fi
 done
 
-printf '\nQuota plugin installed in %s\n' "$HOME_DIR"
+printf "\nUsage Quota II' Turbo plugin installed in %s\n" "$HOME_DIR"
 if [ "$PROFILE_LINKS" -gt 0 ]; then
   if [ "$BROKEN_LINKS" -gt 0 ]; then
     printf 'Linked into %s per-profile plugin roots, but %s did not resolve.\n' \
