@@ -156,6 +156,9 @@ else
 fi
 [ -d "$H1/plugins/quota" ] && ok "backend installed" || bad "backend missing"
 [ -d "$H1/desktop-plugins/quota" ] && ok "widget installed" || bad "widget missing"
+[ -d "$H1/plugins/quota/.git" ] && ok "installed backend retains independent Git history" || bad "installed backend has no Git history"
+[ -f "$H1/plugins/quota/desktop/plugin.js" ] && ok "installed backend retains desktop source" || bad "installed backend has no desktop source"
+grep -q '"installed_commit_date"' "$H1/plugins/quota/version.json" && ok "stamp contains commit date" || bad "stamp lacks commit date"
 L="$H1/profiles/alpha/plugins/quota"
 [ -L "$L" ] && [ -e "$L" ] && ok "alpha backend link resolves" || bad "alpha backend link broken: $L"
 L2="$H1/profiles/alpha/desktop-plugins/quota"

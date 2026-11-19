@@ -37,17 +37,28 @@ BACKUP_PLUGIN="$STAGE_DIR/backup-plugin"
 BACKUP_DESKTOP="$STAGE_DIR/backup-desktop"
 mkdir -p "$STAGE_PLUGIN" "$STAGE_DESKTOP"
 
-for item in \
-  plugin.yaml __init__.py commands.py quota_cache.py quota_providers \
-  LICENSE scripts; do
-  [ -e "$REPO_ROOT/$item" ] && cp -R "$REPO_ROOT/$item" "$STAGE_PLUGIN/"
-done
-cp "$REPO_ROOT/desktop/plugin.js" "$STAGE_DESKTOP/plugin.js"
+# Self-update needs an independent checkout, not a partial source copy.  Never
+# install a different tree than the one whose commit is stamped below.
+REPO_ROOT_WIN="$(cd "$REPO_ROOT" && pwd -W 2>/dev/null || echo "$REPO_ROOT")"
+STAGE_PLUGIN_WIN="$(cd "$STAGE_PLUGIN" && pwd -W 2>/dev/null || echo "$STAGE_PLUGIN")"
+FORK_URL="https://github.com/HaydenCupcake/hermes-quota-widget"
+ORIGIN="$(git -C "$REPO_ROOT_WIN" remote get-url origin 2>/dev/null || true)"
+case "$ORIGIN" in
+  "$FORK_URL"|"$FORK_URL.git") ;;
+  *) echo "Install from a Git checkout of $FORK_URL with that origin." >&2; exit 2 ;;
+esac
+if [ -n "$(git -C "$REPO_ROOT_WIN" status --porcelain --untracked-files=no)" ]; then
+  echo "Commit or discard tracked changes before installing; the installed stamp must match the files." >&2
+  exit 2
+fi
+git clone --quiet --no-local --no-hardlinks "$REPO_ROOT_WIN" "$STAGE_PLUGIN_WIN"
+git -C "$STAGE_PLUGIN_WIN" remote set-url origin "$FORK_URL"
+cp "$STAGE_PLUGIN/desktop/plugin.js" "$STAGE_DESKTOP/plugin.js"
 
 (
   cd "$STAGE_PLUGIN"
   "$PYTHON_BIN" -m py_compile \
-    __init__.py commands.py quota_cache.py \
+    __init__.py commands.py self_update.py quota_cache.py \
     quota_providers/*.py
 )
 rm -rf \
@@ -188,13 +199,13 @@ done
 # Stamp the installed build with its source commit so the widget can check
 # GitHub for newer versions (same pattern as Hermes's own update check).
 # pwd -W yields a Windows-native path so native git resolves it (MSYS /tmp/...).
-REPO_ROOT_WIN="$(cd "$REPO_ROOT" && pwd -W 2>/dev/null || echo "$REPO_ROOT")"
 INSTALLED_SHA="$(git -C "$REPO_ROOT_WIN" rev-parse HEAD 2>/dev/null || echo unknown)"
-printf '{\n  "installed_sha": "%s",\n  "installed_at": "%s"\n}\n' \
-  "$INSTALLED_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+INSTALLED_DATE="$(git -C "$REPO_ROOT_WIN" show -s --format=%cI HEAD 2>/dev/null || echo unknown)"
+printf '{\n  "installed_sha": "%s",\n  "installed_commit_date": "%s",\n  "installed_at": "%s"\n}\n' \
+  "$INSTALLED_SHA" "$INSTALLED_DATE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   > "$PLUGIN_DIR/version.json"
-printf '{\n  "installed_sha": "%s",\n  "installed_at": "%s"\n}\n' \
-  "$INSTALLED_SHA" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+printf '{\n  "installed_sha": "%s",\n  "installed_commit_date": "%s",\n  "installed_at": "%s"\n}\n' \
+  "$INSTALLED_SHA" "$INSTALLED_DATE" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   > "$DESKTOP_DIR/version.json"
 
 trap - ERR

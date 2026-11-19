@@ -82,8 +82,8 @@ class UpstreamUnlinkTests(unittest.TestCase):
         self.assertIsNotNone(m, "REPO_API_LATEST constant missing")
         self.assertEqual(m.group(1), FORK_API)
         externals = re.findall(r'host\.openExternal\?\.\("([^"]+)"\)', src)
-        self.assertEqual(externals, [FORK_URL],
-                         "the update banner must open the fork, and nothing else")
+        self.assertEqual(externals, [],
+                         "the update banner opens settings, not an external link")
 
     def test_scan_source_label_is_fork(self):
         self.assertIn(f'source="{FORK}/community"', read("scripts/scan_plugin.py"))

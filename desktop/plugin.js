@@ -54,7 +54,7 @@ const ID = "quota";
 // gateway, so the two halves can really be different builds. `tests/test_widget_version.py`
 // fails when they drift; a mismatch found at runtime is surfaced in the pane
 // instead of looking like a broken feature.
-const WIDGET_VERSION = "2.10.0";
+const WIDGET_VERSION = "2.11.0";
 
 // Module-level ctx handle (set in register). The data hook below needs it.
 let CTX = null;
@@ -723,96 +723,80 @@ function formatAgeSeconds(seconds) {
 const REPO_API_LATEST =
 	"https://api.github.com/repos/HaydenCupcake/hermes-quota-widget/commits/master";
 
-// Compare the installed commit stamp against GitHub master. One cheap
-// request per hour, cached in storage; never blocks rendering. The cache
-// entry is bound to the stamp it was taken with (`seen`) — so installing
-// a new version invalidates it immediately instead of serving a stale
-// "update available" verdict for the rest of the hour.
-function useUpdateCheck(installedSha) {
-	const [update, setUpdate] = useState(null);
-	useEffect(() => {
-		let alive = true;
-		const CHECK_KEY = "updateCheck";
-		const ONE_HOUR = 60 * 60 * 1000;
-		const run = async () => {
-			// The stamp rides on the status payload — no second CLI spawn on
-			// mount, which is what made a reload (or a gateway switch, where
-			// every plugin re-mounts) feel sluggish.
-			if (!installedSha || installedSha === "unknown") return;
-			// Throttle: at most one GitHub call per hour. The cached verdict
-			// is only valid for the installed stamp it was taken with — a
-			// fresh install must re-check immediately.
-			try {
-				const prev = CTX.storage.get(CHECK_KEY);
-				if (prev) {
-					const p = JSON.parse(prev);
-					if (
-						p.at &&
-						Date.now() - p.at < ONE_HOUR &&
-						p.latest &&
-						p.seen === installedSha
-					) {
-						if (p.latest !== installedSha) {
-							setUpdate({ latest: p.latest });
-						}
-						return;
-					}
-				}
-			} catch {
-				/* noop */
-			}
-			try {
-				const res = await fetch(REPO_API_LATEST, {
-					headers: { Accept: "application/vnd.github+json" },
-				});
-				if (!res.ok) return;
-				const j = await res.json();
-				const latest = j && j.sha;
-				if (!latest) return;
-				try {
-					CTX.storage.set(
-						CHECK_KEY,
-						JSON.stringify({
-							at: Date.now(),
-							latest,
-							seen: installedSha,
-						}),
-					);
-				} catch {
-					/* noop */
-				}
-				if (alive && latest !== installedSha) {
-					setUpdate({ latest });
-				}
-			} catch {
-				/* offline / rate-limited — stay quiet */
-			}
-		};
-		run();
-		return () => {
-			alive = false;
-		};
-	}, [installedSha]);
-	return update;
+const UPDATE_CHECK_KEY = "updateCheck";
+const UPDATE_CHECK_TTL = 60 * 60 * 1000;
+
+function validUpdateStamp(sha, date) {
+	if (typeof sha !== "string" || !sha.trim() || sha === "unknown" || typeof date !== "string") return false;
+	const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/.exec(date);
+	if (!parts || !Number.isFinite(Date.parse(date))) return false;
+	const [, year, month, day, hour, minute, second, zone] = parts;
+	const y = Number(year), m = Number(month), d = Number(day);
+	const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
+	const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+	return m >= 1 && m <= 12 && d >= 1 && d <= days[m - 1] &&
+		Number(hour) <= 23 && Number(minute) <= 59 && Number(second) <= 59 &&
+		(zone === "Z" || (Number(zone.slice(1, 3)) <= 23 && Number(zone.slice(4, 6)) <= 59));
 }
 
-function UpdateBanner({ update }) {
-	if (!update) return null;
-	return jsxs("button", {
+// Cache the raw GitHub observation, not a SHA-only verdict. A changed installed
+// date matters even when the SHA is unchanged. Never turn an error into current.
+function useUpdateCheck(installedSha, installedDate) {
+	const stamp = JSON.stringify([installedSha, installedDate]);
+	const [observation, setObservation] = useState({ stamp, status: "idle" });
+	const request = useRef(0);
+	const check = async (force = false) => {
+		const id = ++request.current;
+		if (!validUpdateStamp(installedSha, installedDate)) {
+			setObservation({ stamp, status: "unstamped" });
+			return;
+		}
+		setObservation({ stamp, status: "checking" });
+		try {
+			let latest;
+			if (!force) {
+				try {
+					const cached = JSON.parse(CTX.storage.get(UPDATE_CHECK_KEY) || "null");
+					if (cached && cached.stamp === stamp && Date.now() >= cached.at &&
+						Date.now() - cached.at < UPDATE_CHECK_TTL &&
+						validUpdateStamp(cached.sha, cached.date)) latest = cached;
+				} catch { /* A corrupt cache is a miss. */ }
+			}
+			if (!latest) {
+				const response = await fetch(REPO_API_LATEST, { headers: { Accept: "application/vnd.github+json" } });
+				if (!response.ok) throw new Error(`GitHub HTTP ${response.status}`);
+				const data = await response.json();
+				latest = { sha: data?.sha, date: data?.commit?.committer?.date };
+				if (!validUpdateStamp(latest.sha, latest.date)) throw new Error("invalid GitHub commit");
+				if (id !== request.current) return;
+				try { CTX.storage.set(UPDATE_CHECK_KEY, JSON.stringify({ ...latest, stamp, at: Date.now() })); } catch { /* storage unavailable */ }
+			}
+			if (id !== request.current) return;
+			setObservation({ stamp, status: latest.sha !== installedSha && Date.parse(latest.date) > Date.parse(installedDate) ? "newer" : "current", latest });
+		} catch (error) {
+			if (id === request.current) setObservation({ stamp, status: "error", error: String(error?.message || error) });
+		}
+	};
+	useEffect(() => {
+		check();
+		return () => { request.current++; };
+	}, [installedSha, installedDate]);
+	const invalidate = () => {
+		request.current++;
+		try { CTX.storage.remove(UPDATE_CHECK_KEY); } catch { /* storage unavailable */ }
+		setObservation({ stamp, status: "idle" });
+	};
+	return { ...(observation.stamp === stamp ? observation : { status: "idle" }), check, invalidate };
+}
+
+function UpdateBanner({ update, onOpen }) {
+	const t = usePluginI18n(ID);
+	if (update.status !== "newer") return null;
+	return jsx("button", {
 		type: "button",
-		className: cn(
-			"flex w-full items-center justify-between gap-2 rounded px-3 py-2 text-left text-[0.6875rem]",
-			"bg-(--chrome-action) text-(--ui-text-secondary) hover:bg-(--chrome-action-hover) transition-colors",
-		),
-		onClick: () =>
-			host.openExternal?.("https://github.com/HaydenCupcake/hermes-quota-widget"),
-		children: [
-			jsx("span", {
-				className: "font-medium",
-				children: "⬆ Update available — run ./install.sh to get it",
-			}),
-			jsx("span", { className: "text-(--ui-text-tertiary)", children: "↗" }),
-		],
+		className: "flex w-full items-center rounded px-3 py-2 text-left text-xs bg-(--chrome-action)",
+		onClick: onOpen,
+		children: t("updateBanner"),
 	});
 }
 
@@ -1954,11 +1938,78 @@ function PaneDetailControl() {
 	});
 }
 
-function QuotaSettings() {
+function UpdateSettings({ data, update, focusUpdate }) {
+	const t = usePluginI18n(ID);
+	const qc = useQueryClient();
+	const section = useRef(null);
+	const [apply, setApply] = useState({ status: "idle" });
+	useEffect(() => { if (focusUpdate) section.current?.focus(); }, [focusUpdate]);
+	const applyUpdate = async () => {
+		const scope = normalizeQuotaScope(host.state.focusedSessionOwner.get());
+		setApply({ status: "working" });
+		try {
+			const result = await quotaCli(scope, ["quota", "self-update"], CLI_TIMEOUT_MS, { spawnPriority: "foreground" });
+			let payload;
+			try {
+				payload = parseJsonOutput(result.output || "", "backend_changed");
+			} catch (parseError) {
+				// Failed updates may only contain an error, not backend_changed.
+				try { payload = parseJsonOutput(result.output || "", "error"); }
+				catch { throw parseError; }
+			}
+			if (payload.success === false || payload.ok === false || payload.error) throw new Error(payload.error || payload.message || "update failed");
+			if (typeof payload.backend_changed !== "boolean" || typeof payload.updated !== "boolean" || payload.widget_synced !== true) throw new Error("invalid or unsynchronized update response");
+			update.invalidate();
+			try { CTX.storage.remove(quotaSnapshotKey(scope)); } catch { /* storage unavailable */ }
+			setApply({ status: "success", updated: payload.updated, backendChanged: payload.backend_changed, profile: scope?.profile });
+			await qc.invalidateQueries({ queryKey: quotaQueryKey(scope) });
+		} catch (error) {
+			setApply({ status: "error", error: String(error?.message || error) });
+		}
+	};
+	const restart = async () => {
+		try {
+			await window.hermesDesktop.recycleBackend(apply.profile || undefined);
+			setApply((old) => ({ ...old, restarting: true }));
+		} catch (error) {
+			setApply((old) => ({ ...old, restartError: String(error?.message || error) }));
+		}
+	};
+	const value = (v) => v || t("updateUnknown");
+	return jsxs("section", {
+		id: "quota-update-section", tabIndex: -1, ref: section,
+		className: "flex flex-col gap-1 rounded border border-(--ui-stroke-secondary) p-2 text-xs",
+		children: [
+			jsx("h3", { children: t("updateTitle") }),
+			jsx("div", { children: t("updateInstalledVersion", WIDGET_VERSION) }),
+			jsx("div", { children: t("updateInstalledSha", value(data?.installed_sha?.slice(0, 7))) }),
+			jsx("div", { children: t("updateInstalledDate", value(data?.installed_date)) }),
+			jsx("div", { children: t("updateLatestSha", value(update.latest?.sha)) }),
+			jsx("div", { children: t("updateLatestDate", value(update.latest?.date)) }),
+			jsx("div", { role: "status", children: update.status === "error" ? t("updateCheckError", update.error) : t(`updateState_${update.status}`) }),
+			jsx("button", { type: "button", disabled: update.status === "checking" || apply.status === "working", onClick: () => update.check(true), children: t("updateCheckButton") }),
+			update.status === "newer" && apply.status !== "working" ? jsx("button", { type: "button", onClick: applyUpdate, children: t("updateApplyButton") }) : null,
+			apply.status === "working" ? jsx("div", { role: "status", children: t("updateApplying") }) : null,
+			apply.status === "error" ? jsx("div", { role: "alert", children: t("updateApplyError", apply.error) }) : null,
+			apply.status === "success" ? jsxs("div", { role: "status", children: [
+				jsx("div", { children: t(!apply.updated ? "updateNoChange" : apply.backendChanged ? "updateSuccessRestart" : "updateSuccessHot") }),
+				apply.backendChanged ? jsx("div", { children: t("updateRestartWarning") }) : null,
+				apply.backendChanged && typeof window.hermesDesktop?.recycleBackend === "function"
+					? jsx("button", { type: "button", disabled: apply.restarting, onClick: restart, children: t("updateRestartButton") })
+					: apply.backendChanged ? jsx("div", { children: t("updateRestartFallback") }) : null,
+				apply.restarting ? jsx("div", { children: t("updateRestarting") }) : null,
+				apply.restartError ? jsx("div", { role: "alert", children: t("updateRestartError", apply.restartError) }) : null,
+			] }) : null,
+		],
+	});
+}
+
+function QuotaSettings({ data, update, focusUpdate }) {
 	const t = usePluginI18n(ID);
 	return jsxs("div", {
 		className: "flex flex-col gap-3 overflow-y-auto py-1",
 		children: [
+			jsx(UpdateSettings, { data, update, focusUpdate }),
 			jsx(ShowStatusBarControl, {}),
 			jsx(StatusbarModeControl, {}),
 			jsx(ShowDockedPaneControl, {}),
@@ -1975,8 +2026,9 @@ function QuotaPane() {
 	const t = usePluginI18n(ID);
 	const qc = useQueryClient();
 	const [view, setView] = useState("list"); // 'list' | 'settings'
+	const [focusUpdate, setFocusUpdate] = useState(false);
 	const { data, isError, isLoading } = useQuota();
-	const update = useUpdateCheck(data && data.installed_sha);
+	const update = useUpdateCheck(data?.installed_sha, data?.installed_date);
 	// Footer honesty: the backend reports the cache age (authoritative across
 	// machines, no clock skew), the ticker keeps it live, and the configured
 	// cadence is shown next to it so "60s" is verifiable at a glance.
@@ -2018,7 +2070,7 @@ function QuotaPane() {
 
 	let body;
 	if (view === "settings") {
-		body = jsx(QuotaSettings, {});
+		body = jsx(QuotaSettings, { data, update, focusUpdate });
 	} else if (isLoading) {
 		body = jsx("div", {
 			className: "text-xs text-(--ui-text-tertiary)",
@@ -2145,7 +2197,7 @@ function QuotaPane() {
 													"text-xs text-(--ui-text-tertiary) hover:bg-(--chrome-action-hover) hover:text-foreground transition-colors",
 												),
 												title: t("settingsTip"),
-												onClick: () => setView("settings"),
+												onClick: () => { setFocusUpdate(false); setView("settings"); },
 												children: jsxs("span", {
 													className: "inline-flex items-center gap-1",
 													children: [
@@ -2168,7 +2220,7 @@ function QuotaPane() {
 				className: "min-h-0 flex-1",
 				"data-quota-scroll": true,
 				style: { minHeight: 0, minWidth: 0, overflowY: "auto", overflowX: "hidden", flex: "1 1 0%" },
-				children: jsxs("div", { children: [body, jsx(UpdateBanner, { update }), versionSkew] }),
+				children: jsxs("div", { children: [body, view === "list" ? jsx(UpdateBanner, { update, onOpen: () => { setFocusUpdate(true); setView("settings"); } }) : null, versionSkew] }),
 			}),
 			data && data.fetched_at
 				? jsx("div", {
@@ -2264,6 +2316,32 @@ export default {
 			en: {
 				paneTitle: "Usage Quota II' Turbo",
 				settingsTitle: "Usage Quota II' Turbo · Settings",
+				updateBanner: "⬆ New version available — open settings to update",
+				updateTitle: "Updates",
+				updateUnknown: "Unknown",
+				updateInstalledVersion: (v) => `Installed version: ${v}`,
+				updateInstalledSha: (v) => `Installed SHA: ${v}`,
+				updateInstalledDate: (v) => `Installed date: ${v}`,
+				updateLatestSha: (v) => `Latest SHA: ${v}`,
+				updateLatestDate: (v) => `Latest date: ${v}`,
+				updateState_idle: "Update status not checked.",
+				updateState_checking: "Checking for updates…",
+				updateState_unstamped: "Installation not stamped with a valid commit SHA and date; cannot determine whether an update is available. Reinstall from a clean fork checkout to create the stamp.",
+				updateState_current: "No newer version available.",
+				updateState_newer: "New version available.",
+				updateCheckError: (error) => `Could not check for updates: ${error}`,
+				updateCheckButton: "Check for update",
+				updateApplyButton: "Update now",
+				updateApplying: "Updating…",
+				updateApplyError: (error) => `Update failed: ${error}`,
+				updateSuccessHot: "Update installed. Widget changes hot-reload; no backend restart needed.",
+				updateNoChange: "Already up to date; no update was installed.",
+				updateSuccessRestart: "Update installed. Restart the backend to finish the update.",
+				updateRestartWarning: "Warning: restarting the backend interrupts all sessions.",
+				updateRestartButton: "Restart backend to finish update",
+				updateRestartFallback: "Restart Hermes Desktop to finish the update; backend restart is unavailable here.",
+				updateRestarting: "Backend restart requested.",
+				updateRestartError: (error) => `Backend restart failed: ${error}. Restart Hermes Desktop to finish the update.`,
 				chipTip: (pct, label, reset) =>
 					`Usage Quota II' Turbo · lowest ${pct}% (${label})${reset ? ` · resets in ${reset}` : ""}`,
 				providerTip: (label, pct, reset) =>

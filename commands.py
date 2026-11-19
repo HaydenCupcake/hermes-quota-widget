@@ -154,7 +154,7 @@ def _plugin_stamp() -> dict[str, Any]:
     two — the extra round-trip was part of the slow reload after a gateway
     switch.
     """
-    out: dict[str, Any] = {"plugin_version": None, "installed_sha": None}
+    out: dict[str, Any] = {"plugin_version": None, "installed_sha": None, "installed_date": None}
     root = Path(__file__).resolve().parent
     try:
         for line in (root / "plugin.yaml").read_text(encoding="utf-8").splitlines():
@@ -167,6 +167,7 @@ def _plugin_stamp() -> dict[str, Any]:
         stamp = json.loads((root / "version.json").read_text(encoding="utf-8"))
         if isinstance(stamp, dict):
             out["installed_sha"] = stamp.get("installed_sha")
+            out["installed_date"] = stamp.get("installed_commit_date")
     except (OSError, ValueError):
         pass
     return out
@@ -245,6 +246,7 @@ def setup_argparse(subparser):
         help="Never refresh: emit the cache as-is (desktop widget poll path)",
     )
     subs.add_parser("refresh", help="Force a re-fetch of all providers")
+    subs.add_parser("self-update", help="Safely update this plugin from its fork")
     prov = subs.add_parser("provider", help="Show quota for one provider")
     prov.add_argument("name", help="provider id, e.g. anthropic, grok, openai-codex")
     for provider_id in _PROVIDER_IDS:
@@ -254,6 +256,16 @@ def setup_argparse(subparser):
 
 def _handle_cli(args):
     cmd = getattr(args, "quota_command", None) or "status"
+    if cmd == "self-update":
+        try:
+            from hermes_cli.desktop_plugin_install import desktop_plugins_root
+            from .self_update import self_update
+            result = self_update(Path(__file__).resolve().parent, desktop_plugins_root())
+        except Exception as exc:
+            print(json.dumps({"error": str(exc)}))
+            raise SystemExit(1) from exc
+        print(json.dumps(result))
+        return
     if cmd == "refresh":
         refresh_quota_cache()
         print(_render_quota(None))

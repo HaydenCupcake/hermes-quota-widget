@@ -28,7 +28,9 @@ Use **Reload desktop plugins** for client JavaScript changes. A long-lived backe
 
 ## Updating
 
-Source installation: fetch the approved revision and re-run the installer only if its all-profile scope is acceptable. A pinned fork install follows no catalog entry: Hermes will not auto-update it, and `hermes plugins update quota` refuses a pinned checkout, printing the deliberate move command (`hermes plugins install <source> --force --ref <40-character commit SHA>`). An immutable `--ref` must be the full commit SHA and must be available from the requested source. Verify installed identity after any update rather than treating acceptance as success.
+The pane's Settings page checks the fork and offers an update when its latest commit is newer. Updating requires a clean Git checkout whose origin is the fork; the updater fetches the fork's master and refuses non-fast-forward histories. It keeps a rollback ref and does not automatically restart the backend. If Python files changed, restarting the backend is a separate action that interrupts active sessions. Installations made by older copy-only installers need to be reinstalled from a clean fork checkout before this works. The installer retains an independent checkout and requires tracked source files to be clean. Its all-profile scope still applies.
+
+A pinned fork install follows no catalog entry: Hermes will not auto-update it, and `hermes plugins update quota` refuses a pinned checkout, printing the deliberate move command (`hermes plugins install <source> --force --ref <40-character commit SHA>`). Verify installed identity after any update rather than treating acceptance as success.
 
 ```bash
 hermes quota status --version-json
