@@ -136,10 +136,27 @@ class SelfUpdateTests(unittest.TestCase):
         self.assertEqual(stamp['installed_commit_date'], git(self.clone, 'show', '-s', '--format=%cI', 'HEAD'))
         self.assertIn('installed_at', stamp)
         self.assertEqual(result['stamp'], stamp)
+        self.assertEqual(stamp['update_receipt'], {
+            'from_sha': self.old, 'to_sha': new,
+            'backend_changed': True, 'widget_synced': True,
+        })
         self.assertEqual((self.app / 'quota/plugin.js').read_text(), 'old')
         marker = json.loads((self.app / 'quota/.hermes-package.json').read_text())
         self.assertEqual(marker['source'], str(self.clone / 'desktop'))
         self.assertEqual(marker['package'], 'quota')
+
+    def test_advanced_stamp_does_not_prove_desktop_sync(self):
+        # A failure after the stamp write must not be misreported as a complete
+        # update merely because a status read sees the new commit.
+        from hermes_cli import desktop_plugin_halves as halves
+        new = self.advance('desktop/plugin.js')
+        with patch.object(halves, 'materialize_desktop_half', side_effect=RuntimeError('synthetic sync failure')):
+            with self.assertRaisesRegex(RuntimeError, 'synthetic sync failure'):
+                self.run_update()
+        stamp = json.loads((self.clone / 'version.json').read_text(encoding='utf-8'))
+        self.assertEqual(stamp['installed_sha'], new)
+        self.assertNotIn('update_receipt', stamp)
+        self.assertFalse((self.app / 'quota/plugin.js').exists())
 
     def test_wrong_origin_refuses_without_fetch(self):
         git(self.clone, 'remote', 'set-url', 'origin', 'https://example.invalid/not-fork')

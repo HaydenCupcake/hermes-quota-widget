@@ -85,7 +85,7 @@ const factory = new Function(
   "CTX",
   "setTimeout",
   "clearTimeout",
-  `${source.slice(start, end)}\nreturn { CLI_TIMEOUT_MS, normalizeQuotaScope, parseJsonOutput, quotaQueryKey, readSnapshot, writeSnapshot, quotaCli, refreshQuotaCache, refreshFocusedQuota: typeof refreshFocusedQuota === "function" ? refreshFocusedQuota : undefined };`,
+  `${source.slice(start, end)}\nreturn { CLI_TIMEOUT_MS, waitForApply, normalizeQuotaScope, parseJsonOutput, quotaQueryKey, readSnapshot, writeSnapshot, quotaCli, refreshQuotaCache, refreshFocusedQuota: typeof refreshFocusedQuota === "function" ? refreshFocusedQuota : undefined };`,
 );
 const api = factory(host, CTX, setTimeout, clearTimeout);
 const invalidated = [];
@@ -123,6 +123,9 @@ const makeUseQuota = new Function(
   "writeSnapshot",
   "readSnapshot",
   "refreshQuotaCache",
+  "waitForApply",
+  "CLI_TIMEOUT_MS",
+  "applyInFlight",
   `${source.slice(useQuotaStart, useQuotaEnd)}\nreturn useQuota;`,
 );
 
@@ -163,6 +166,9 @@ const makeUseQuota = new Function(
     api.writeSnapshot,
     api.readSnapshot,
     api.refreshQuotaCache,
+    api.waitForApply,
+    api.CLI_TIMEOUT_MS,
+    false,
   );
   const hookOptions = useQuota();
   focusedOwner = { connectionId: "remote-b", profile: "shared" };

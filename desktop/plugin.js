@@ -54,7 +54,7 @@ const ID = "quota";
 // gateway, so the two halves can really be different builds. `tests/test_widget_version.py`
 // fails when they drift; a mismatch found at runtime is surfaced in the pane
 // instead of looking like a broken feature.
-const WIDGET_VERSION = "2.11.0";
+const WIDGET_VERSION = "2.11.1";
 
 // Module-level ctx handle (set in register). The data hook below needs it.
 let CTX = null;
@@ -812,7 +812,30 @@ function UpdateBanner({ update, onOpen }) {
 const QUOTA_QUERY_KEY = ["quota", "widget"];
 const SNAPSHOT_KEY = "lastPayload";
 const CLI_TIMEOUT_MS = 120_000;
+const UPDATE_TIMEOUT_MS = 240_000;
+const UPDATE_RECOVERY_READ_MS = 30_000;
+let applyInFlight = false;
+let pendingSelfUpdate = null;
+let releaseApplyWaiters = null;
+let applySettled = Promise.resolve();
 const _refreshInFlight = new Set();
+
+function beginApply() {
+	if (applyInFlight) return false;
+	applyInFlight = true;
+	applySettled = new Promise((resolve) => { releaseApplyWaiters = resolve; });
+	return true;
+}
+
+function endApply() {
+	applyInFlight = false;
+	releaseApplyWaiters?.();
+	releaseApplyWaiters = null;
+}
+
+async function waitForApply() {
+	while (applyInFlight) await applySettled;
+}
 
 function normalizeQuotaScope(owner) {
 	const connectionId = String(owner?.connectionId || "").trim();
@@ -991,7 +1014,7 @@ function writeSnapshot(scope, data) {
 /** One CLI call that can never hang the UI: a gateway switch leaves the
  *  previous request sitting on a dead socket, and without a deadline the pane
  *  waits it out instead of failing over to the new gateway. */
-async function quotaCli(scope, argv, timeoutMs = CLI_TIMEOUT_MS, options) {
+async function quotaCli(scope, argv, timeoutMs = CLI_TIMEOUT_MS, options, yieldToApply = false) {
 	let timer = null;
 	let expired = false;
 	const deadline = Date.now() + timeoutMs;
@@ -1010,6 +1033,7 @@ async function quotaCli(scope, argv, timeoutMs = CLI_TIMEOUT_MS, options) {
 						`quota profile route ${matches.length ? "ambiguous" : "unavailable"}`,
 					);
 				}
+				if (yieldToApply) await waitForApply();
 				const remainingMs = deadline - Date.now();
 				if (expired || remainingMs <= 0) {
 					throw new Error("quota cli timeout");
@@ -1018,7 +1042,7 @@ async function quotaCli(scope, argv, timeoutMs = CLI_TIMEOUT_MS, options) {
 					argv: ["--profile", matches[0].targetProfile, ...argv],
 					timeout: Math.max(1, Math.min(90, Math.floor(remainingMs / 1000) - 1)),
 				};
-				return options
+				const request = options
 					? host.requestProfile(
 							matches[0],
 							"cli.exec",
@@ -1027,6 +1051,16 @@ async function quotaCli(scope, argv, timeoutMs = CLI_TIMEOUT_MS, options) {
 							options,
 						)
 					: host.requestProfile(matches[0], "cli.exec", params, remainingMs);
+				if (argv[0] === "quota" && argv[1] === "self-update") {
+					const pending = Promise.resolve(request);
+					pendingSelfUpdate = pending;
+					const clear = () => { if (pendingSelfUpdate === pending) pendingSelfUpdate = null; };
+					pending.then(clear, (error) => {
+						// Only this gateway error proves its subprocess has stopped.
+						if (/cli\.exec:\s*timeout/i.test(String(error?.message || error))) clear();
+					});
+				}
+				return request;
 			})(),
 			new Promise((_resolve, reject) => {
 				timer = setTimeout(
@@ -1071,19 +1105,24 @@ function useQuota() {
 	return useQuery({
 		queryKey,
 		queryFn: async () => {
+			await waitForApply();
 			// One cache-aware request refreshes only when due and returns the new
 			// snapshot in the SAME response. The old read → refresh → read chain
 			// paid profile discovery and CLI startup three times per update.
 			const result = await quotaCli(scope, [
 				"quota", "status", "--json", "--max-age", String(intervalSec),
-			]);
+			], CLI_TIMEOUT_MS, undefined, true);
 			const data = parseJsonOutput(result.output || "", "providers");
 			writeSnapshot(scope, data);
 			return data;
 		},
 		placeholderData: readSnapshot(scope),
 		enabled: Boolean(scope),
+		refetchOnMount: () => !applyInFlight,
+		refetchOnWindowFocus: () => !applyInFlight,
+		refetchOnReconnect: () => !applyInFlight,
 		refetchInterval: (query) => {
+			if (applyInFlight) return false;
 			// Count from when the backend snapshot was fetched, not from the
 			// end of slow routing/CLI work. Errors back off at the chosen interval.
 			const state = query.state;
@@ -1943,17 +1982,40 @@ function UpdateSettings({ data, update, focusUpdate }) {
 	const qc = useQueryClient();
 	const section = useRef(null);
 	const [apply, setApply] = useState({ status: "idle" });
+	const now = useNow(1_000);
 	useEffect(() => { if (focusUpdate) section.current?.focus(); }, [focusUpdate]);
 	const applyUpdate = async () => {
+		if (pendingSelfUpdate) {
+			setApply({ status: "error", error: t("updatePreviousPending") });
+			return;
+		}
 		const scope = normalizeQuotaScope(host.state.focusedSessionOwner.get());
-		setApply({ status: "working" });
+		if (!beginApply()) return;
+		const expected = update.latest?.sha;
+		const previous = data?.installed_sha;
+		const startedAt = Date.now();
+		const deadline = startedAt + UPDATE_TIMEOUT_MS;
+		setApply({ status: "working", startedAt, phase: "waiting" });
 		try {
-			const result = await quotaCli(scope, ["quota", "self-update"], CLI_TIMEOUT_MS, { spawnPriority: "foreground" });
+			let result;
+			for (let attempt = 0; attempt < 2; attempt++) {
+				try {
+					const remaining = deadline - Date.now();
+					if (remaining <= 0) throw new Error("quota cli timeout");
+					result = await quotaCli(scope, ["quota", "self-update"], remaining, { spawnPriority: "foreground" });
+					setApply((old) => ({ ...old, phase: "applying" }));
+					break;
+				} catch (error) {
+					// A gateway timeout means its subprocess was stopped. A renderer
+					// deadline does not: retrying it could start two writers.
+					if (attempt !== 0 || !/cli\.exec:\s*timeout/i.test(String(error?.message || error)) || Date.now() >= deadline) throw error;
+					setApply((old) => ({ ...old, phase: "applying" }));
+				}
+			}
 			let payload;
 			try {
 				payload = parseJsonOutput(result.output || "", "backend_changed");
 			} catch (parseError) {
-				// Failed updates may only contain an error, not backend_changed.
 				try { payload = parseJsonOutput(result.output || "", "error"); }
 				catch { throw parseError; }
 			}
@@ -1962,9 +2024,41 @@ function UpdateSettings({ data, update, focusUpdate }) {
 			update.invalidate();
 			try { CTX.storage.remove(quotaSnapshotKey(scope)); } catch { /* storage unavailable */ }
 			setApply({ status: "success", updated: payload.updated, backendChanged: payload.backend_changed, profile: scope?.profile });
-			await qc.invalidateQueries({ queryKey: quotaQueryKey(scope) });
 		} catch (error) {
-			setApply({ status: "error", error: String(error?.message || error) });
+			const message = String(error?.message || error);
+			setApply((old) => ({ ...old, phase: "verifying", error: message }));
+			let observed = false;
+			let receipt = null;
+			// The stamp precedes desktop synchronization; only the separately
+			// recorded post-sync receipt can establish a complete update.
+			for (let attempt = 0; attempt < 3 && expected && previous && expected !== previous; attempt++) {
+				const nextReadAt = Date.now() + UPDATE_RECOVERY_READ_MS;
+				try {
+					const result = await quotaCli(scope, ["quota", "status", "--version-json", "--cached"], UPDATE_RECOVERY_READ_MS);
+					const stamp = parseJsonOutput(result.output || "", "installed_sha");
+					if (stamp.installed_sha === expected) {
+						observed = true;
+						const candidate = stamp.update_receipt;
+						if (candidate?.from_sha === previous && candidate?.to_sha === expected &&
+							candidate.widget_synced === true && typeof candidate.backend_changed === "boolean") {
+							receipt = candidate;
+							break;
+						}
+					}
+				} catch { /* Preserve the original update error. */ }
+				if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, Math.max(0, nextReadAt - Date.now())));
+			}
+			if (receipt) {
+				update.invalidate();
+				try { CTX.storage.remove(quotaSnapshotKey(scope)); } catch { /* storage unavailable */ }
+				setApply({ status: "success", updated: true, caughtUp: true, backendChanged: receipt.backend_changed, profile: scope?.profile });
+			} else {
+				setApply(observed ? { status: "observed", sha: expected, error: message } : { status: "error", error: message });
+			}
+		} finally {
+			endApply();
+			// Do not let a slow post-update refresh hold the operation open.
+			Promise.resolve(qc.invalidateQueries({ queryKey: quotaQueryKey(scope) })).catch(() => {});
 		}
 	};
 	const restart = async () => {
@@ -1988,10 +2082,14 @@ function UpdateSettings({ data, update, focusUpdate }) {
 			jsx("div", { children: t("updateLatestDate", value(update.latest?.date)) }),
 			jsx("div", { role: "status", children: update.status === "error" ? t("updateCheckError", update.error) : t(`updateState_${update.status}`) }),
 			jsx("button", { type: "button", disabled: update.status === "checking" || apply.status === "working", onClick: () => update.check(true), children: t("updateCheckButton") }),
-			update.status === "newer" && apply.status !== "working" ? jsx("button", { type: "button", onClick: applyUpdate, children: t("updateApplyButton") }) : null,
-			apply.status === "working" ? jsx("div", { role: "status", children: t("updateApplying") }) : null,
+			update.status === "newer" && apply.status === "idle" ? jsx("button", { type: "button", onClick: applyUpdate, children: t("updateApplyButton") }) : null,
+			apply.status === "working" ? jsx("div", { role: "status", children: t("updateProgress", Math.max(0, Math.floor((now - apply.startedAt) / 1000)), t(apply.phase === "waiting" ? "updateWaiting" : apply.phase === "verifying" ? "updateVerifying" : "updateApplyingPhase")) }) : null,
+			apply.status === "working" && apply.error ? jsx("div", { role: "alert", children: t("updateApplyError", apply.error) }) : null,
 			apply.status === "error" ? jsx("div", { role: "alert", children: t("updateApplyError", apply.error) }) : null,
+			apply.status === "observed" ? jsx("div", { role: "alert", children: t("updateStampObserved", apply.sha, apply.error) }) : null,
+			apply.status === "error" || apply.status === "observed" ? jsx("button", { type: "button", onClick: applyUpdate, children: t("updateRetry") }) : null,
 			apply.status === "success" ? jsxs("div", { role: "status", children: [
+				apply.caughtUp ? jsx("div", { children: t("updateCaughtUp") }) : null,
 				jsx("div", { children: t(!apply.updated ? "updateNoChange" : apply.backendChanged ? "updateSuccessRestart" : "updateSuccessHot") }),
 				apply.backendChanged ? jsx("div", { children: t("updateRestartWarning") }) : null,
 				apply.backendChanged && typeof window.hermesDesktop?.recycleBackend === "function"
@@ -2332,7 +2430,14 @@ export default {
 				updateCheckError: (error) => `Could not check for updates: ${error}`,
 				updateCheckButton: "Check for update",
 				updateApplyButton: "Update now",
-				updateApplying: "Updating…",
+				updateProgress: (seconds, phase) => `Updating… ${seconds}s · ${phase}`,
+				updateWaiting: "waiting for backend queue or response…",
+				updateApplyingPhase: "applying…",
+				updateVerifying: "checking the install stamp…",
+				updateRetry: "Retry",
+				updatePreviousPending: "The previous update request may still be pending at the backend; retry is paused to avoid starting a second update.",
+				updateStampObserved: (sha, error) => `Install stamp advanced to ${sha}, but desktop synchronization and backend restart requirements could not be confirmed. Original error: ${error}`,
+				updateCaughtUp: "Update applied; the UI caught up after the first attempt ended without a reply.",
 				updateApplyError: (error) => `Update failed: ${error}`,
 				updateSuccessHot: "Update installed. Widget changes hot-reload; no backend restart needed.",
 				updateNoChange: "Already up to date; no update was installed.",

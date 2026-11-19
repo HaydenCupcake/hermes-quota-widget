@@ -103,7 +103,13 @@ def self_update(root: Path, app_root: Path) -> dict:
                   (target / 'plugin.js').read_bytes() == (root / 'desktop' / 'plugin.js').read_bytes())
     if not synced:
         raise RuntimeError('Git update completed, but the desktop widget could not be synchronized; check the installed desktop plugin.')
+    backend_changed = any(p.endswith('.py') and not p.startswith('tests/') for p in changed)
+    # The initial stamp is written before synchronization. Only this second,
+    # atomic write is a receipt that the desktop check above actually passed.
+    stamp['update_receipt'] = {'from_sha': before, 'to_sha': after,
+                               'backend_changed': backend_changed, 'widget_synced': True}
+    _write_json(root / 'version.json', stamp)
     return {'updated': before != after, 'from_sha': before, 'to_sha': after,
             'changed_files': changed,
-            'backend_changed': any(p.endswith('.py') and not p.startswith('tests/') for p in changed),
+            'backend_changed': backend_changed,
             'widget_synced': synced, 'stamp': stamp}
